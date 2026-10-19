@@ -1,8 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   cacheComponents: true,
+  images: {
+    // Google profile photos shown in the account menu.
+    remotePatterns: [{ protocol: "https", hostname: "lh3.googleusercontent.com" }],
+  },
   partialPrefetching: true,
   turbopack: {
     rules: {
