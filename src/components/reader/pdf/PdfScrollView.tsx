@@ -5,6 +5,7 @@ import { Document, Page, pdfjs } from "react-pdf";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import "react-pdf/dist/Page/TextLayer.css";
 import type { PdfFit } from "@/lib/reader/prefs";
+import { PDF_OPTIONS } from "@/lib/reader/pdfjs";
 import { BookLoader } from "../BookLoader";
 
 // PDF.js parses and draws pages in a Web Worker so scrolling stays smooth.
@@ -205,6 +206,7 @@ export default function PdfScrollView({
       */}
       <Document
         file={file}
+        options={PDF_OPTIONS}
         suspense={false}
         onLoadSuccess={handleLoad}
         loading={<BookLoader title={title} className="min-h-[calc(100dvh-3.5rem)]" />}

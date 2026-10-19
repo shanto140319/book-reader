@@ -2,6 +2,7 @@
 // Imported dynamically from the library page so PDF.js only loads when a cover is needed.
 
 import { pdfjs } from "react-pdf";
+import { PDF_OPTIONS } from "@/lib/reader/pdfjs";
 
 // Same worker setting as the reader (harmless to set twice; the value is identical).
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -10,7 +11,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.m
 const COVER_WIDTH = 360;
 
 export async function renderPdfCover(file: Blob): Promise<string> {
-  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  const task = pdfjs.getDocument({ ...PDF_OPTIONS, data: new Uint8Array(await file.arrayBuffer()) });
   try {
     const pdf = await task.promise;
     const page = await pdf.getPage(1);

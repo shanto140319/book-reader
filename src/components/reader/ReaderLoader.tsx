@@ -4,8 +4,9 @@ import { BookX } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getBook, getBookFile, getCover, getProgress } from "@/lib/library/local";
+import { library } from "@/lib/library";
 import type { Book } from "@/lib/library/types";
+import { loadPrefs, type ReaderPrefs } from "@/lib/reader/prefs";
 import { BookLoader } from "./BookLoader";
 
 // PDF.js needs browser APIs (canvas, Web Workers), so the reader is loaded
@@ -15,7 +16,7 @@ const PdfReader = dynamic(() => import("./pdf/PdfReader"), { ssr: false, loading
 type State =
   | { status: "loading" }
   | { status: "missing" }
-  | { status: "ready"; book: Book; file: Blob; initialPage: number; cover: string | null };
+  | { status: "ready"; book: Book; file: Blob; initialPage: number; cover: string | null; prefs: ReaderPrefs };
 
 export function ReaderLoader({ bookId }: { bookId: string }) {
   const [state, setState] = useState<State>({ status: "loading" });
@@ -27,14 +28,21 @@ export function ReaderLoader({ bookId }: { bookId: string }) {
   // PDF from memory) so the next visit starts fresh instead of reusing stale scroll state.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getBook(bookId), getBookFile(bookId), getProgress(bookId), getCover(bookId)]).then(
-      ([book, file, progress, cover]) => {
+    Promise.all([
+      library.getBook(bookId),
+      library.getBookFile(bookId),
+      library.getProgress(bookId),
+      library.getCover(bookId),
+      loadPrefs(),
+    ]).then(
+      ([book, file, progress, cover, prefs]) => {
         if (cancelled) return;
         if (!book || !file) return setState({ status: "missing" });
         const saved = Number(progress?.position);
         const initialPage = Number.isInteger(saved) && saved > 0 ? saved : 1;
-        setState({ status: "ready", book, file, initialPage, cover: cover || null });
+        setState({ status: "ready", book, file, initialPage, cover: cover || null, prefs });
       },
+      () => !cancelled && setState({ status: "missing" }),
     );
     return () => {
       cancelled = true;
@@ -50,12 +58,20 @@ export function ReaderLoader({ bookId }: { bookId: string }) {
           <BookX className="size-6" strokeWidth={1.8} />
         </span>
         <h1 className="mt-5 font-serif text-2xl">Book not found</h1>
-        <p className="mt-1.5 text-sm text-muted">It may have been deleted, or it was added on another device.</p>
+        <p className="mt-1.5 text-sm text-muted">It may have been deleted, or the connection dropped. Please try again.</p>
         <Link href="/library" className="mt-6 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-bg">
           Back to library
         </Link>
       </div>
     );
   }
-  return <PdfReader book={state.book} file={state.file} initialPage={state.initialPage} cover={state.cover} />;
+  return (
+    <PdfReader
+      book={state.book}
+      file={state.file}
+      initialPage={state.initialPage}
+      cover={state.cover}
+      initialPrefs={state.prefs}
+    />
+  );
 }

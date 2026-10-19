@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AppHeader, AppHeaderSkeleton } from "@/components/app/AppHeader";
-import { LocalLibrary } from "@/components/library/LocalLibrary";
+import { Library } from "@/components/library/Library";
 
 export const metadata: Metadata = { title: "Library" };
 
@@ -16,7 +16,7 @@ export default function LibraryPage() {
       </Suspense>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-5 py-10 sm:px-8">
-        <LocalLibrary />
+        <Library />
       </main>
     </>
   );

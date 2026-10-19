@@ -78,6 +78,7 @@
   --shadow-card: var(--shadow-card);
   --font-sans: var(--font-inter);
   --font-serif: var(--font-fraunces);
+  --font-bangla: var(--font-tiro-bangla);
 }
 
 /* Loader animations: used as `animate-page-flip` and `animate-indeterminate`. */

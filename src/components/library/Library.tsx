@@ -2,18 +2,25 @@
 
 import { FileUp, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { addBook, deleteBook, getBookFile, listBooks, setCover } from "@/lib/library/local";
+import { library } from "@/lib/library";
 import type { BookWithProgress } from "@/lib/library/types";
 import { BookCard } from "./BookCard";
 
-export function LocalLibrary() {
+export function Library() {
   const [books, setBooks] = useState<BookWithProgress[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const refresh = useCallback(() => listBooks().then(setBooks), []);
+  const refresh = useCallback(
+    () =>
+      library.listBooks().then(setBooks, (e: Error) => {
+        setBooks((prev) => prev ?? []);
+        setError(e.message);
+      }),
+    [],
+  );
 
   useEffect(() => {
     void refresh();
@@ -30,7 +37,7 @@ export function LocalLibrary() {
       const { renderPdfCover } = await import("@/lib/library/cover");
       for (const id of missingKey.split(",")) {
         if (cancelled) return;
-        const file = await getBookFile(id);
+        const file = await library.getBookFile(id);
         if (!file) continue;
         let cover = "";
         try {
@@ -38,7 +45,7 @@ export function LocalLibrary() {
         } catch {
           // damaged or unusual PDF: keep the generated cover
         }
-        await setCover(id, cover);
+        await library.setCover(id, cover);
         if (cancelled) return;
         setBooks((prev) => prev?.map((b) => (b.id === id ? { ...b, cover } : b)) ?? prev);
       }
@@ -52,7 +59,7 @@ export function LocalLibrary() {
     setError(null);
     setAdding(true);
     try {
-      for (const file of Array.from(files)) await addBook(file);
+      for (const file of Array.from(files)) await library.addBook(file);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't add that file.");
     } finally {
@@ -63,7 +70,11 @@ export function LocalLibrary() {
 
   async function handleDelete(book: BookWithProgress) {
     if (!confirm(`Delete "${book.title}"? This removes the file and your reading progress.`)) return;
-    await deleteBook(book.id);
+    try {
+      await library.deleteBook(book.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete that book.");
+    }
     await refresh();
   }
 

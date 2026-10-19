@@ -3,6 +3,7 @@
 import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { library } from "@/lib/library";
 
 type Props = { name: string; email: string; avatarUrl: string | null };
 
@@ -50,7 +51,19 @@ export function UserMenu({ name, email, avatarUrl }: Props) {
               <p className="truncate text-xs text-muted">{email}</p>
             </div>
           </div>
-          <form action="/auth/signout" method="post" className="p-1.5">
+          <form
+            action="/auth/signout"
+            method="post"
+            className="p-1.5"
+            onSubmit={async (e) => {
+              // Remove this account's downloaded books from the browser before signing out
+              // (matters on shared computers).
+              e.preventDefault();
+              const form = e.currentTarget;
+              await library.clearCache().catch(() => {});
+              form.submit();
+            }}
+          >
             <button
               type="submit"
               role="menuitem"

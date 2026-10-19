@@ -1,6 +1,5 @@
-// Browser-only book storage (IndexedDB via idb-keyval).
-// For now this is the whole library. Once Supabase is connected, the same
-// functions become an offline cache in front of the server.
+// Browser-only book storage (IndexedDB via idb-keyval), used in local mode (no Supabase keys).
+// With Supabase configured, ./cloud.ts is used instead (see ./index.ts).
 
 import { createStore, del, entries, get, set, type UseStore } from "idb-keyval";
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, type Book, type BookWithProgress, type Progress } from "./types";
@@ -77,6 +76,9 @@ export async function updateBook(id: string, patch: Partial<Omit<Book, "id">>) {
 export async function deleteBook(id: string) {
   await Promise.all([del(id, db().books), del(id, db().files), del(id, db().progress), del(id, db().covers)]);
 }
+
+/** Nothing to clear: in local mode this browser's storage IS the library. */
+export async function clearCache() {}
 
 export async function getCover(id: string) {
   return get<string>(id, db().covers);

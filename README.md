@@ -1,6 +1,6 @@
 # book-reader
 
-Folio: a web reader for PDF (and soon EPUB) books that opens every book at the page where you stopped, on any device.
+Pata (পাতা, Bangla for "page"): a web reader for PDF (and soon EPUB) books that opens every book at the page where you stopped, on any device.
 
 Built with Next.js (App Router), Tailwind CSS, react-pdf (PDF.js) and Supabase (planned for sign-in, storage and sync).
 
@@ -14,7 +14,12 @@ npm run dev
 Open http://localhost:3000.
 
 Without Supabase keys the app runs in **local mode**: no sign-in, and books, covers and reading progress are stored in your browser (IndexedDB).
-To connect Supabase later, copy `.env.example` to `.env.local` and fill in the values.
+To connect Supabase, copy `.env.example` to `.env.local` and fill in the values, then run
+[supabase/migrations/20261019120000_library.sql](supabase/migrations/20261019120000_library.sql) once in
+Supabase → SQL Editor. It creates the `books`, `reading_progress` and `user_settings` tables, the private
+`books` storage bucket, and Row Level Security so each user can only reach their own books.
+With Supabase connected, books, covers, progress and reader settings are stored per account and
+sync across devices; each browser keeps a cache of the files it has opened.
 
 ## Features so far
 

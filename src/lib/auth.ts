@@ -1,3 +1,4 @@
+import { cacheLife } from "next/cache";
 import { supabaseConfigured } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 
@@ -14,6 +15,12 @@ export type CurrentUser = {
  * Google profile fields arrive in `user_metadata`.
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
+  // getClaims() compares the token's expiry with Date.now(). With Cache Components that's only
+  // allowed inside a cache scope; "private" keeps it per user (in the browser, never in a
+  // server cache shared between people). 5 min stale lets the header be prefetched.
+  "use cache: private";
+  cacheLife({ stale: 300 });
+
   if (!supabaseConfigured) return null;
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();

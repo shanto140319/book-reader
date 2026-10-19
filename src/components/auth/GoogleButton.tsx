@@ -1,66 +1,71 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useState, useSyncExternalStore } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { GOOGLE_CLIENT_ID, googleStore, loadGoogle, setOnSignedIn } from "@/lib/auth/google";
 
-const noSubscribe = () => () => {};
+type Props = {
+  /** Small "Sign in" button for the navbar; the default is the large hero button. */
+  compact?: boolean;
+};
 
-export function GoogleButton() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/** Google draws the button itself into a div; see lib/auth/google.ts for the sign-in flow. */
+export function GoogleButton({ compact = false }: Props) {
+  const slotRef = useRef<HTMLDivElement>(null);
+  const { version, busy, error } = useSyncExternalStore(googleStore.subscribe, googleStore.get, googleStore.getServer);
 
-  // /auth/callback sends people back to /?error=auth if sign-in failed.
-  // useSyncExternalStore reads it in the browser; the server snapshot is false.
-  const callbackFailed = useSyncExternalStore(
-    noSubscribe,
-    () => new URLSearchParams(window.location.search).get("error") === "auth",
-    () => false,
-  );
-  const message = error ?? (callbackFailed && !loading ? "Sign-in didn't complete. Please try again." : null);
+  const router = useRouter();
 
-  async function signIn() {
-    setLoading(true);
-    setError(null);
-    const { error } = await createClient().auth.signInWithOAuth({
-      provider: "google",
-      // Google sends the user to Supabase, which then sends them here.
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    // On success the browser is already navigating to Google.
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    }
+  useEffect(loadGoogle, []);
+  useEffect(() => setOnSignedIn(() => router.replace("/library")), [router]);
+
+  // Draw (or re-draw after a retry) once Google is initialised.
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (!version || !slot || !window.google) return;
+    slot.replaceChildren();
+    window.google.accounts.id.renderButton(
+      slot,
+      compact
+        ? { type: "standard", theme: "outline", size: "medium", shape: "pill", text: "signin" }
+        : {
+            type: "standard",
+            theme: "filled_black",
+            size: "large",
+            shape: "pill",
+            text: "continue_with",
+            logo_alignment: "left",
+            width: 260,
+          },
+    );
+  }, [version, compact]);
+
+  if (!GOOGLE_CLIENT_ID) {
+    return compact ? null : (
+      <p className="text-sm text-danger">Google sign-in isn&apos;t set up (NEXT_PUBLIC_GOOGLE_CLIENT_ID is missing).</p>
+    );
   }
+
+  const status = busy ? "Signing you in…" : !version ? (compact ? "" : "Loading Google sign-in…") : null;
 
   return (
     <div className="flex flex-col items-start gap-3">
-      <button
-        type="button"
-        onClick={signIn}
-        disabled={loading}
-        className="inline-flex h-12 items-center justify-center gap-3 rounded-full bg-ink px-6 text-[15px] font-medium text-bg shadow-card transition hover:opacity-90 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
-      >
-        {loading ? <Loader2 className="size-5 animate-spin" /> : <GoogleIcon />}
-        Continue with Google
-      </button>
-      {message && (
+      {/* Fixed height so nothing jumps while Google's button loads. */}
+      <div className={`relative ${compact ? "h-8 min-w-20" : "h-11"}`}>
+        <div ref={slotRef} className={busy ? "pointer-events-none opacity-50" : undefined} />
+        {status !== null && (
+          <span className="absolute inset-0 flex items-center gap-2 whitespace-nowrap text-sm text-muted">
+            {busy && <Loader2 className="size-4 animate-spin" />}
+            {!compact && status}
+          </span>
+        )}
+      </div>
+      {error && !compact && (
         <p role="alert" className="text-sm text-danger">
-          {message}
+          {error}
         </p>
       )}
     </div>
-  );
-}
-
-function GoogleIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-5" aria-hidden>
-      <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.7Z" />
-      <path fill="#34A853" d="M12 24c3.2 0 6-1.1 7.9-2.9l-3.9-3c-1 .7-2.4 1.1-4 1.1-3.1 0-5.7-2.1-6.6-4.9h-4v3.1A12 12 0 0 0 12 24Z" />
-      <path fill="#FBBC05" d="M5.4 14.3a7.2 7.2 0 0 1 0-4.6V6.6h-4a12 12 0 0 0 0 10.8l4-3.1Z" />
-      <path fill="#EA4335" d="M12 4.8c1.7 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.4 6.6l4 3.1C6.3 6.9 8.9 4.8 12 4.8Z" />
-    </svg>
   );
 }

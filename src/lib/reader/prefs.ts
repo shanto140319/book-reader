@@ -1,5 +1,8 @@
-// Reader preferences, saved in this browser for now.
-// Later these move to the user_settings table so they follow you across devices.
+// Reader preferences. Saved in this browser (instant on open) and, when signed in, in the
+// user_settings table so they follow you across devices. The newer copy wins.
+
+import { createClient } from "@/lib/supabase/client";
+import { supabaseConfigured } from "@/lib/supabase/config";
 
 /**
  * auto:   comfortable width (fills small screens, capped on large ones)
@@ -18,23 +21,55 @@ export type ReaderPrefs = {
   sidebarTab: SidebarTab;
 };
 
-const KEY = "folio:reader-prefs";
+const KEY = "pata:reader-prefs";
 const DEFAULTS: ReaderPrefs = { pdfFit: "auto", pdfZoom: 1, sidebarOpen: true, sidebarTab: "contents" };
+/** Wait this long after the last change before saving to the server (zoom clicks come in bursts). */
+const REMOTE_DELAY = 1500;
 
-export function loadPrefs(): ReaderPrefs {
+type Saved = { prefs: Partial<ReaderPrefs>; updatedAt: number };
+
+function readLocal(): Saved {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Saved | null;
+    return saved?.prefs ? saved : { prefs: {}, updatedAt: 0 };
   } catch {
-    return DEFAULTS;
+    return { prefs: {}, updatedAt: 0 };
   }
 }
 
-export function savePrefs(prefs: ReaderPrefs) {
+/** This browser's copy, or the server's when that one is newer (changed on another device). */
+export async function loadPrefs(): Promise<ReaderPrefs> {
+  const local = readLocal();
+  if (!supabaseConfigured) return { ...DEFAULTS, ...local.prefs };
   try {
-    localStorage.setItem(KEY, JSON.stringify(prefs));
+    const { data } = await createClient().from("user_settings").select("reader_prefs, updated_at").maybeSingle();
+    const remoteAt = data ? Date.parse(data.updated_at as string) : 0;
+    if (data && remoteAt > local.updatedAt) {
+      return { ...DEFAULTS, ...(data.reader_prefs as Partial<ReaderPrefs>) };
+    }
   } catch {
-    // Private mode or storage full: preferences just won't persist.
+    // offline: this browser's copy is fine
   }
+  return { ...DEFAULTS, ...local.prefs };
+}
+
+let remoteTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function savePrefs(prefs: ReaderPrefs) {
+  const updatedAt = Date.now();
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ prefs, updatedAt } satisfies Saved));
+  } catch {
+    // Private mode or storage full: preferences just won't persist here.
+  }
+  if (!supabaseConfigured) return;
+  clearTimeout(remoteTimer);
+  remoteTimer = setTimeout(async () => {
+    const { error } = await createClient()
+      .from("user_settings")
+      .upsert({ reader_prefs: prefs, updated_at: new Date(updatedAt).toISOString() }, { onConflict: "user_id" });
+    if (error) console.error(error);
+  }, REMOTE_DELAY);
 }
 
 export const MIN_ZOOM = 0.25;

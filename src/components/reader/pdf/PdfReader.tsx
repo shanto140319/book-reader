@@ -4,24 +4,24 @@ import { ArrowLeft, PanelLeft } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { saveProgress, updateBook } from "@/lib/library/local";
+import { library } from "@/lib/library";
 import type { Book } from "@/lib/library/types";
-import { clampZoom, loadPrefs, nextZoom, savePrefs, type PdfFit } from "@/lib/reader/prefs";
+import { clampZoom, nextZoom, savePrefs, type PdfFit, type ReaderPrefs } from "@/lib/reader/prefs";
 import { useDebouncedSave } from "@/lib/useDebouncedSave";
 import { PdfSidebar } from "./PdfSidebar";
 import PdfScrollView, { type PdfScrollHandle } from "./PdfScrollView";
 
-type Props = { book: Book; file: Blob; initialPage: number; cover: string | null };
+type Props = { book: Book; file: Blob; initialPage: number; cover: string | null; initialPrefs: ReaderPrefs };
 
 const isDesktop = () => window.matchMedia("(min-width: 1024px)").matches;
 
-export default function PdfReader({ book, file, initialPage, cover }: Props) {
+export default function PdfReader({ book, file, initialPage, cover, initialPrefs }: Props) {
   const scrollView = useRef<PdfScrollHandle>(null);
   const [page, setPage] = useState(initialPage);
   const [numPages, setNumPages] = useState(book.pageCount ?? 0);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [scale, setScale] = useState(1);
-  const [prefs, setPrefs] = useState(loadPrefs);
+  const [prefs, setPrefs] = useState(initialPrefs);
   const [trim, setTrim] = useState(book.pdfTrim ?? 0);
   // Phones always start with the panel closed so the page gets the whole screen.
   const [sidebarOpen, setOpenState] = useState(() => prefs.sidebarOpen && isDesktop());
@@ -37,10 +37,14 @@ export default function PdfReader({ book, file, initialPage, cover }: Props) {
   }, []);
   useEffect(() => () => clearTimeout(closeTimer.current), []);
 
-  useEffect(() => savePrefs(prefs), [prefs]);
+  // Save changes only (not the prefs we just loaded), so opening a book doesn't write to the server.
+  const loadedPrefs = useRef(initialPrefs);
+  useEffect(() => {
+    if (prefs !== loadedPrefs.current) savePrefs(prefs);
+  }, [prefs]);
 
   const scheduleSave = useDebouncedSave((p: number) =>
-    saveProgress(book.id, {
+    library.saveProgress(book.id, {
       position: String(p),
       percent: numPages ? Math.round((p / numPages) * 1000) / 10 : 0,
       updatedAt: Date.now(),
@@ -51,7 +55,7 @@ export default function PdfReader({ book, file, initialPage, cover }: Props) {
     (doc: PDFDocumentProxy) => {
       setPdf(doc);
       setNumPages(doc.numPages);
-      if (book.pageCount !== doc.numPages) void updateBook(book.id, { pageCount: doc.numPages });
+      if (book.pageCount !== doc.numPages) void library.updateBook(book.id, { pageCount: doc.numPages });
     },
     [book.id, book.pageCount],
   );
@@ -81,9 +85,11 @@ export default function PdfReader({ book, file, initialPage, cover }: Props) {
   const zoomTo = (pdfZoom: number) => setPrefs((p) => ({ ...p, pdfFit: "custom", pdfZoom: clampZoom(pdfZoom) }));
   const setFit = (pdfFit: PdfFit) => setPrefs((p) => ({ ...p, pdfFit }));
 
+  // Per book: every book has different margins. Debounced, since dragging the slider fires a lot.
+  const scheduleTrimSave = useDebouncedSave((pdfTrim: number) => library.updateBook(book.id, { pdfTrim }), 800);
   function changeTrim(value: number) {
     setTrim(value);
-    void updateBook(book.id, { pdfTrim: value }); // per book: every book has different margins
+    scheduleTrimSave(value);
   }
 
   function toggleSidebar() {

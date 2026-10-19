@@ -33,6 +33,13 @@ export default function Home() {
 
       <header className="relative mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-6 sm:px-8">
         <Logo />
+        {supabaseConfigured ? (
+          <GoogleButton compact />
+        ) : (
+          <Link href="/library" className="text-sm font-medium text-muted transition hover:text-ink">
+            Library
+          </Link>
+        )}
       </header>
 
       <main className="relative mx-auto grid w-full max-w-6xl flex-1 items-center gap-16 px-5 pb-16 pt-6 sm:px-8 lg:grid-cols-[1.05fr_1fr] lg:pt-0">
@@ -45,7 +52,7 @@ export default function Home() {
             Every book, right where you <em className="text-accent">left off</em>.
           </h1>
           <p className="mt-6 max-w-lg text-lg leading-relaxed text-muted text-pretty">
-            Upload your PDFs and EPUBs once. Folio remembers your page and your reading settings on every device.
+            Upload your PDFs and EPUBs once. Pata remembers your page and your reading settings on every device.
           </p>
           <div className="mt-9 flex flex-col items-start gap-3">
             {supabaseConfigured ? (

@@ -1,13 +1,15 @@
 import type { Metadata, Viewport } from "next";
-import { Fraunces, Inter } from "next/font/google";
+import { Fraunces, Inter, Tiro_Bangla } from "next/font/google";
 import "./globals.css";
 
 // next/font self-hosts the fonts at build time: no runtime request to Google, no layout shift.
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
 const fraunces = Fraunces({ variable: "--font-fraunces", subsets: ["latin"] });
+// Only for the "পাতা" next to the logo, so it isn't preloaded on every page.
+const tiroBangla = Tiro_Bangla({ variable: "--font-tiro-bangla", subsets: ["bengali"], weight: "400", preload: false });
 
 export const metadata: Metadata = {
-  title: { default: "Folio", template: "%s · Folio" },
+  title: { default: "Pata", template: "%s · Pata" },
   description: "Your private library. Pick up every book exactly where you left off, on any device.",
 };
 
@@ -20,7 +22,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${inter.variable} ${fraunces.variable} h-full antialiased`}>
+    <html lang="en" className={`${inter.variable} ${fraunces.variable} ${tiroBangla.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
