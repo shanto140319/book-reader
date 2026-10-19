@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -13,6 +13,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.m
 
 /** Pages rendered on each side of the current page. Everything else is an empty placeholder. */
 const RENDER_WINDOW = 2;
+/** Pages on each side that also get the (DOM-heavy) selectable text layer. */
+const TEXT_WINDOW = 1;
 /** Page width at 100% / "Auto" on large screens (smaller screens use their full width). */
 const AUTO_MAX_WIDTH = 920;
 /** Longest canvas side in device pixels. Keeps memory sane at high zoom on big scanned books. */
@@ -165,6 +167,21 @@ export default function PdfScrollView({
     if (renderWidth && hundred > 0) onScaleChange(renderWidth / hundred);
   }, [renderWidth, trim, box.width, pad, onScaleChange]);
 
+  // Stable callbacks so memoized PageSlots don't re-render when the current page changes.
+  const registerPage = useCallback((n: number, el: HTMLDivElement | null) => {
+    if (el) pageEls.current.set(n, el);
+    else pageEls.current.delete(n);
+  }, []);
+  const baseRatio = base?.ratio;
+  const handleRatio = useCallback(
+    (n: number, ratio: number) => {
+      // Only store pages whose shape differs from page 1 (avoids needless re-renders).
+      if (baseRatio === undefined || Math.abs(ratio - baseRatio) <= 0.01) return;
+      setRatios((r) => (r[n] === ratio ? r : { ...r, [n]: ratio }));
+    },
+    [baseRatio],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
@@ -199,40 +216,20 @@ export default function PdfScrollView({
           <div className="flex w-max min-w-full flex-col items-center" style={{ gap, padding: `${gap}px ${pad}px` }}>
             {Array.from({ length: numPages }, (_, i) => {
               const n = i + 1;
-              const height = renderWidth * (ratios[n] ?? base.ratio);
-              const visible = Math.abs(n - currentPage) <= RENDER_WINDOW;
+              const distance = Math.abs(n - currentPage);
               return (
-                <div
+                <PageSlot
                   key={n}
-                  data-page={n}
-                  ref={(el) => {
-                    if (el) pageEls.current.set(n, el);
-                    else pageEls.current.delete(n);
-                  }}
-                  style={{ width: boxWidth, height }}
-                  className="pdf-page relative shrink-0 overflow-hidden rounded-[2px] bg-white shadow-[0_1px_3px_rgb(0_0_0/0.1),0_10px_28px_-14px_rgb(0_0_0/0.28)]"
-                >
-                  {visible ? (
-                    // Full-size page shifted left by `offset`; the box's overflow-hidden clips both sides.
-                    <div className="absolute top-0" style={{ left: -offset, width: renderWidth }}>
-                      <Page
-                        suspense={false}
-                        pageNumber={n}
-                        width={renderWidth}
-                        devicePixelRatio={dpr}
-                        renderAnnotationLayer={false}
-                        loading={<PagePlaceholder />}
-                        onLoadSuccess={(page) => {
-                          const ratio = page.originalHeight / page.originalWidth;
-                          // Only store pages whose shape differs from page 1 (avoids needless re-renders).
-                          if (Math.abs(ratio - base.ratio) > 0.01) setRatios((r) => ({ ...r, [n]: ratio }));
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <PagePlaceholder />
-                  )}
-                </div>
+                  n={n}
+                  boxWidth={boxWidth}
+                  renderWidth={renderWidth}
+                  height={renderWidth * (ratios[n] ?? base.ratio)}
+                  offset={offset}
+                  dpr={dpr}
+                  mode={distance <= TEXT_WINDOW ? "text" : distance <= RENDER_WINDOW ? "canvas" : "empty"}
+                  register={registerPage}
+                  onRatio={handleRatio}
+                />
               );
             })}
           </div>
@@ -273,15 +270,78 @@ function hundredPercentWidth(trim: number, availWidth: number) {
   return Math.min(availWidth, AUTO_MAX_WIDTH) / (1 - 2 * trim);
 }
 
+type SlotProps = {
+  n: number;
+  boxWidth: number;
+  renderWidth: number;
+  height: number;
+  offset: number;
+  dpr: number;
+  /** text: canvas + selectable text · canvas: canvas only · empty: lightweight placeholder */
+  mode: "text" | "canvas" | "empty";
+  register: (n: number, el: HTMLDivElement | null) => void;
+  onRatio: (n: number, ratio: number) => void;
+};
+
+/**
+ * One page box. memo() + primitive props mean that when you move to the next page, only the
+ * few boxes whose mode changes re-render, not all of them (that mattered on 200+ page books).
+ */
+const PageSlot = memo(function PageSlot({
+  n,
+  boxWidth,
+  renderWidth,
+  height,
+  offset,
+  dpr,
+  mode,
+  register,
+  onRatio,
+}: SlotProps) {
+  const ref = useCallback((el: HTMLDivElement | null) => register(n, el), [register, n]);
+  return (
+    <div
+      data-page={n}
+      ref={ref}
+      style={{ width: boxWidth, height }}
+      className="pdf-page relative shrink-0 overflow-hidden rounded-[2px] bg-white shadow-[0_1px_3px_rgb(0_0_0/0.1),0_10px_28px_-14px_rgb(0_0_0/0.28)]"
+    >
+      {mode === "empty" ? (
+        <span aria-hidden className="absolute inset-x-0 top-1/2 text-center text-xs tabular-nums text-neutral-300">
+          {n}
+        </span>
+      ) : (
+        // Full-size page shifted left by `offset`; the box's overflow-hidden clips both sides.
+        <div className="absolute top-0" style={{ left: -offset, width: renderWidth }}>
+          <Page
+            suspense={false}
+            pageNumber={n}
+            width={renderWidth}
+            devicePixelRatio={dpr}
+            renderTextLayer={mode === "text"}
+            renderAnnotationLayer={false}
+            loading={<LoadingPage />}
+            onLoadSuccess={(page) => onRatio(n, page.originalHeight / page.originalWidth)}
+          />
+        </div>
+      )}
+    </div>
+  );
+});
+
 const SKELETON_LINES = ["38%", "92%", "97%", "88%", "95%", "70%", "", "94%", "90%", "96%", "62%"];
 
-/** Faint "text lines" shown while a page is drawing. */
-function PagePlaceholder() {
+/**
+ * Faint "text lines" while a nearby page is drawing. One animation for the whole block
+ * (not one per line), and only on the few pages actually loading. Earlier every one of
+ * 200 placeholders animated ~10 lines, which made phones recalculate styles every frame.
+ */
+function LoadingPage() {
   return (
-    <div aria-hidden className="absolute inset-0 bg-white px-[9%] py-[11%]">
+    <div aria-hidden className="absolute inset-0 animate-pulse bg-white px-[9%] py-[11%]">
       {SKELETON_LINES.map((w, i) =>
         w ? (
-          <div key={i} className="mb-3 h-2 animate-pulse rounded-full bg-neutral-100" style={{ width: w }} />
+          <div key={i} className="mb-3 h-2 rounded-full bg-neutral-100" style={{ width: w }} />
         ) : (
           <div key={i} className="h-4" />
         ),

@@ -9,6 +9,8 @@ import { PdfOutline } from "./PdfOutline";
 import { PdfThumbnails } from "./PdfThumbnails";
 
 type Props = {
+  /** false while the panel is closed: the Contents/Pages lists aren't rendered then. */
+  active: boolean;
   pdf: PDFDocumentProxy | null;
   tab: SidebarTab;
   onTab: (tab: SidebarTab) => void;
@@ -40,7 +42,7 @@ const TABS: { value: SidebarTab; label: string }[] = [
 ];
 
 export function PdfSidebar(props: Props) {
-  const { pdf, tab, onTab, title, cover, page, numPages, scale, fit, trim } = props;
+  const { active, pdf, tab, onTab, title, cover, page, numPages, scale, fit, trim } = props;
   const { onGoTo, onZoom, onZoomTo, onFit, onTrim, onClose } = props;
   const percent = numPages ? Math.round((page / numPages) * 100) : 0;
 
@@ -103,7 +105,8 @@ export function PdfSidebar(props: Props) {
 
       {/* data-sidebar-scroll: the scroll area the outline/thumbnail lists keep their current item visible in */}
       <div data-sidebar-scroll role="tabpanel" className="relative mt-2 min-h-0 flex-1 overflow-y-auto">
-        {tab === "contents" &&
+        {active &&
+          tab === "contents" &&
           (pdf ? (
             <PdfOutline
               pdf={pdf}
@@ -115,7 +118,8 @@ export function PdfSidebar(props: Props) {
           ) : (
             <ListSkeleton />
           ))}
-        {tab === "pages" &&
+        {active &&
+          tab === "pages" &&
           (pdf ? (
             <PdfThumbnails pdf={pdf} numPages={numPages} currentPage={page} onSelect={onGoTo} />
           ) : (

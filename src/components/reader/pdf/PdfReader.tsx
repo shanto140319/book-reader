@@ -24,7 +24,18 @@ export default function PdfReader({ book, file, initialPage, cover }: Props) {
   const [prefs, setPrefs] = useState(loadPrefs);
   const [trim, setTrim] = useState(book.pdfTrim ?? 0);
   // Phones always start with the panel closed so the page gets the whole screen.
-  const [sidebarOpen, setSidebarOpen] = useState(() => prefs.sidebarOpen && isDesktop());
+  const [sidebarOpen, setOpenState] = useState(() => prefs.sidebarOpen && isDesktop());
+  // The Contents/Pages lists only exist while the panel is open (plus 300ms so the closing
+  // slide still shows them). A closed phone drawer used to keep drawing thumbnails while you read.
+  const [listsMounted, setListsMounted] = useState(sidebarOpen);
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const setSidebarOpen = useCallback((open: boolean) => {
+    setOpenState(open);
+    clearTimeout(closeTimer.current);
+    if (open) setListsMounted(true);
+    else closeTimer.current = setTimeout(() => setListsMounted(false), 300);
+  }, []);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
 
   useEffect(() => savePrefs(prefs), [prefs]);
 
@@ -60,7 +71,7 @@ export default function PdfReader({ book, file, initialPage, cover }: Props) {
       scrollView.current?.scrollToPage(n, Math.abs(n - page) <= 1);
       if (!isDesktop()) setSidebarOpen(false); // show the page on phones
     },
-    [numPages, page],
+    [numPages, page, setSidebarOpen],
   );
 
   const zoom = useCallback(
@@ -149,6 +160,7 @@ export default function PdfReader({ book, file, initialPage, cover }: Props) {
           }`}
         >
           <PdfSidebar
+            active={listsMounted}
             pdf={pdf}
             tab={prefs.sidebarTab}
             onTab={(sidebarTab) => setPrefs((p) => ({ ...p, sidebarTab }))}
