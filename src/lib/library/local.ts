@@ -2,8 +2,8 @@
 // With Supabase configured, ./cloud.ts is used instead (see ./index.ts).
 
 import { createStore, del, entries, get, set, type UseStore } from "idb-keyval";
+import { checkBookFile, readBookInfo } from "./detect";
 import {
-  MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
   type Book,
   type BookWithProgress,
@@ -46,29 +46,26 @@ export async function getBook(id: string) {
   return get<Book>(id, db().books);
 }
 
-export async function getBookFile(id: string) {
-  return get<Blob>(id, db().files);
+export async function getBookFile(book: Pick<Book, "id" | "fileType">) {
+  return get<Blob>(book.id, db().files);
 }
 
 /** Validates and stores a picked file. Throws an Error with a user-friendly message. */
 export async function addBook(file: File, onStep: OnUploadStep = () => {}): Promise<Book> {
   onStep({ stage: "checking" });
-  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  if (!isPdf) throw new Error("Only PDF files are supported for now.");
-  if (file.size > MAX_FILE_BYTES) throw new Error("That file is over the 50 MB limit.");
-
-  // Check the real file header, not just the name: PDFs start with "%PDF-".
-  const header = new TextDecoder().decode(await file.slice(0, 5).arrayBuffer());
-  if (header !== "%PDF-") throw new Error("That file doesn't look like a valid PDF.");
+  const fileType = await checkBookFile(file);
 
   const used = (await entries<string, Book>(db().books)).reduce((sum, [, b]) => sum + b.sizeBytes, 0);
   if (used + file.size > MAX_TOTAL_BYTES) throw new Error("Your library is full (1 GB limit).");
 
+  onStep({ stage: "cover" });
+  const { title, author, cover } = await readBookInfo(file, fileType);
+
   const book: Book = {
     id: crypto.randomUUID(),
-    title: file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Untitled",
-    author: null,
-    fileType: "pdf",
+    title,
+    author,
+    fileType,
     sizeBytes: file.size,
     pageCount: null,
     createdAt: Date.now(),
@@ -76,6 +73,7 @@ export async function addBook(file: File, onStep: OnUploadStep = () => {}): Prom
   // Store the file first so a book entry never points at a missing file.
   onStep({ stage: "saving" });
   await set(book.id, file, db().files);
+  await set(book.id, cover, db().covers);
   await set(book.id, book, db().books);
   return book;
 }
@@ -93,6 +91,7 @@ export async function deleteBook(id: string) {
     del(id, db().progress),
     del(id, db().covers),
     ...highlights.map((h) => del(h.id, db().highlights)),
+    import("./epub-locations").then((cache) => cache.deleteSavedLocations(id)),
   ]);
 }
 

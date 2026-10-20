@@ -23,7 +23,7 @@ export const HIGHLIGHT_LABEL: Record<HighlightColor, string> = {
 };
 
 /** What a selection becomes once a colour is picked. */
-export type HighlightDraft = Pick<Highlight, "page" | "rects" | "text">;
+export type HighlightDraft = Pick<Highlight, "page" | "rects" | "text" | "cfi">;
 
 const MAX_RECTS = 200; // same limit as the database
 const MAX_TEXT = 5000;
@@ -131,11 +131,28 @@ export function highlightAt(highlights: Highlight[], page: number, x: number, y:
   return hit;
 }
 
-/** Reading order: by page, then top to bottom, then left to right. */
+/** Reading order: by page, then top to bottom, then left to right. EPUB: by chapter, then place in the text. */
 export function compareHighlights(a: Highlight, b: Highlight) {
+  if (a.page !== b.page) return a.page - b.page;
+  if (a.cfi || b.cfi) return compareSteps(cfiSteps(a.cfi), cfiSteps(b.cfi));
   const ra = a.rects[0];
   const rb = b.rects[0];
-  return a.page - b.page || ra.y - rb.y || ra.x - rb.x;
+  return ra.y - rb.y || ra.x - rb.x;
+}
+
+/**
+ * The numbers along a CFI range's start point, e.g. "epubcfi(/6/4!/4/2,/1:5,/1:9)" → [6, 4, 4, 2, 1, 5].
+ * Enough to order two places in the same book (as text, "/10" would sort before "/4").
+ */
+function cfiSteps(cfi = "") {
+  const inner = cfi.replace(/^epubcfi\(|\)$/g, "").replace(/\[[^\]]*\]/g, ""); // drop id assertions like [chap01]
+  const [base, start = ""] = inner.split(",");
+  return (base + start).match(/\d+/g)?.map(Number) ?? [];
+}
+
+function compareSteps(a: number[], b: number[]) {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));

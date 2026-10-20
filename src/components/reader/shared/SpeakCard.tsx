@@ -14,8 +14,8 @@ type Props = {
 
 /**
  * Small player shown while the selected text is read aloud. Reading starts in the tap that
- * opens it (see PdfScrollView), because iPhone only allows speech started by a tap.
- * Closing the card, or any other menu replacing it, stops the voice (PdfScrollView does that).
+ * opens it (see PdfScrollView / EpubView), because iPhone only allows speech started by a tap.
+ * Closing the card, or any other menu replacing it, stops the voice (the reader view does that).
  */
 export function SpeakCard({ text, anchor, scrollerRef, onClose }: Props) {
   const { speaking } = useSyncExternalStore(speech.subscribe, speech.getSnapshot, speech.getServerSnapshot);

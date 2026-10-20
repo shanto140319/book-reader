@@ -14,7 +14,9 @@ type Props = {
 
 export function BookCard({ book, deleting = false, onDelete }: Props) {
   const percent = Math.round(book.progress?.percent ?? 0);
-  const page = book.progress ? Number(book.progress.position) : null;
+  // EPUBs have no fixed pages (their position is a CFI): they show the author (or % read) instead.
+  const page = book.progress && book.fileType === "pdf" ? Number(book.progress.position) : null;
+  const status = page && book.pageCount ? `Page ${page} of ${book.pageCount}` : page ? `Page ${page}` : null;
 
   return (
     <div className={`group relative transition-opacity ${deleting ? "pointer-events-none" : ""}`} aria-busy={deleting}>
@@ -61,7 +63,7 @@ export function BookCard({ book, deleting = false, onDelete }: Props) {
           <span className="text-[11px] tabular-nums text-muted">{percent}%</span>
         </div>
         <p className="text-xs text-subtle">
-          {page && book.pageCount ? `Page ${page} of ${book.pageCount}` : page ? `Page ${page}` : "Not started"}
+          {status ?? book.author ?? (book.progress ? `${percent}% read` : "Not started")}
         </p>
       </div>
     </div>

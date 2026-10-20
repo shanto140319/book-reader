@@ -6,6 +6,8 @@
 // name, size and date) in localStorage, and the book keeps the id it was given the first time.
 
 import type { DetailedError, Upload } from "tus-js-client";
+import { CONTENT_TYPE } from "./detect";
+import type { BookFileType } from "./types";
 
 const BUCKET = "books";
 /** Supabase requires exactly 6 MB pieces. */
@@ -18,10 +20,15 @@ export type ResumableUpload = {
 };
 
 /**
- * Prepares the upload of `file` to `<uid>/<book id>.pdf`. Call `start()` to send it.
+ * Prepares the upload of `file` to `<uid>/<book id>.pdf` (or `.epub`). Call `start()` to send it.
  * `token` is asked for before every request, so a long upload survives a session refresh.
  */
-export async function prepareUpload(file: File, uid: string, token: () => Promise<string>): Promise<ResumableUpload> {
+export async function prepareUpload(
+  file: File,
+  type: BookFileType,
+  uid: string,
+  token: () => Promise<string>,
+): Promise<ResumableUpload> {
   const { Upload } = await import("tus-js-client");
   const upload: Upload = new Upload(file, {
     endpoint: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`,
@@ -40,12 +47,12 @@ export async function prepareUpload(file: File, uid: string, token: () => Promis
   const previous = (await upload.findPreviousUploads().catch(() => [])).find((p) =>
     p.metadata.objectName?.startsWith(prefix),
   );
-  const id = previous ? previous.metadata.objectName.slice(prefix.length).replace(/\.pdf$/, "") : crypto.randomUUID();
+  const id = previous ? previous.metadata.objectName.slice(prefix.length).replace(/\.(pdf|epub)$/, "") : crypto.randomUUID();
 
   upload.options.metadata = {
     bucketName: BUCKET,
-    objectName: `${prefix}${id}.pdf`,
-    contentType: "application/pdf",
+    objectName: `${prefix}${id}.${type}`,
+    contentType: CONTENT_TYPE[type],
     cacheControl: "3600",
   };
   if (previous) upload.resumeFromPreviousUpload(previous);

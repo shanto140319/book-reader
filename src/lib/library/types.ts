@@ -6,7 +6,7 @@ export type Book = {
   author: string | null;
   fileType: BookFileType;
   sizeBytes: number;
-  pageCount: number | null; // PDF only, filled in the first time the book is opened
+  pageCount: number | null; // PDF only, filled in the first time the book is opened (EPUBs reflow: no fixed pages)
   pdfTrim?: number; // PDF only: fraction of page width hidden on EACH side (0–0.25). Per book, margins differ.
   createdAt: number;
 };
@@ -35,8 +35,10 @@ export type HighlightRect = { page: number; x: number; y: number; w: number; h: 
 export type Highlight = {
   id: string;
   bookId: string;
-  page: number; // first page the highlight is on (a selection can cross into the next page)
-  rects: HighlightRect[];
+  /** PDF: first page the highlight is on (a selection can cross into the next page). EPUB: chapter file, 1-based. */
+  page: number;
+  rects: HighlightRect[]; // PDF only; empty for EPUB
+  cfi?: string; // EPUB only: where the highlighted words are in the book's text (a CFI range)
   text: string; // the highlighted words, for the sidebar list
   color: HighlightColor;
   createdAt: number;

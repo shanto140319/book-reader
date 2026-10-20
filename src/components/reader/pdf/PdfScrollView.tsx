@@ -21,9 +21,9 @@ import type { PdfFit } from "@/lib/reader/prefs";
 import { speak, speechSupported, stopSpeaking } from "@/lib/reader/speech";
 import { PDF_OPTIONS } from "@/lib/reader/pdfjs";
 import { BookLoader } from "../BookLoader";
-import { HighlightMenu, type MenuAnchor } from "./HighlightMenu";
-import { SpeakCard } from "./SpeakCard";
-import { TranslateCard } from "./TranslateCard";
+import { HighlightMenu, type MenuAnchor } from "../shared/HighlightMenu";
+import { SpeakCard } from "../shared/SpeakCard";
+import { TranslateCard } from "../shared/TranslateCard";
 
 // PDF.js parses and draws pages in a Web Worker so scrolling stays smooth.
 // react-pdf requires this to be set in the same file that renders <Document>.

@@ -12,17 +12,39 @@ import { supabaseConfigured } from "@/lib/supabase/config";
  */
 export type PdfFit = "auto" | "width" | "page" | "custom";
 
-export type SidebarTab = "contents" | "pages" | "highlights" | "settings";
+export type SidebarTab = "contents" | "pages" | "highlights" | "settings"; // EPUB has no "pages"
+
+/** EPUB page colours. auto: follows the app (light or dark). */
+export type EpubTheme = "auto" | "light" | "sepia" | "dark";
+/** EPUB typeface. publisher: the book's own fonts. */
+export type EpubFont = "publisher" | "serif" | "sans";
 
 export type ReaderPrefs = {
   pdfFit: PdfFit;
   pdfZoom: number; // 1 = 100% = page fits this screen ("Auto" width); only used when pdfFit is "custom"
   sidebarOpen: boolean; // desktop only; on phones the sidebar always starts closed
   sidebarTab: SidebarTab;
+  epubTheme: EpubTheme;
+  epubFont: EpubFont;
+  epubFontSize: number; // percent of the book's own size
+  epubFontWeight: number; // 0 = the book's own weight, else 300–800
+  epubLetterSpacing: number; // extra space between letters, in em (0 = normal)
+  epubLineHeight: number; // 0 = the book's own spacing, else 1–2
 };
 
 const KEY = "pata:reader-prefs";
-const DEFAULTS: ReaderPrefs = { pdfFit: "auto", pdfZoom: 1, sidebarOpen: true, sidebarTab: "contents" };
+const DEFAULTS: ReaderPrefs = {
+  pdfFit: "auto",
+  pdfZoom: 1,
+  sidebarOpen: true,
+  sidebarTab: "contents",
+  epubTheme: "auto",
+  epubFont: "publisher",
+  epubFontSize: 100,
+  epubFontWeight: 0,
+  epubLetterSpacing: 0,
+  epubLineHeight: 0,
+};
 /** Wait this long after the last change before saving to the server (zoom clicks come in bursts). */
 const REMOTE_DELAY = 1500;
 
@@ -79,6 +101,17 @@ export const MAX_TRIM = 0.25;
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 
 export const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+/** Steps for Ctrl + / −; the slider goes in 5% steps between the ends. */
+export const EPUB_FONT_SIZES = [80, 90, 100, 110, 120, 135, 150, 175, 200];
+
+/** Slider ranges for the EPUB settings. */
+export const EPUB_RANGES = {
+  fontSize: { min: 80, max: 200, step: 5 },
+  fontWeight: { min: 300, max: 800, step: 100 },
+  letterSpacing: { min: 0, max: 0.1, step: 0.005 },
+  lineHeight: { min: 1, max: 2, step: 0.05 },
+};
 
 /** The next zoom step above (dir 1) or below (dir -1) the current scale. */
 export function nextZoom(scale: number, dir: 1 | -1) {

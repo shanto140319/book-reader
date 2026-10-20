@@ -3,7 +3,7 @@
 import { FileUp, Loader2, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { library } from "@/lib/library";
-import type { BookWithProgress, UploadStep } from "@/lib/library/types";
+import type { BookFileType, BookWithProgress, UploadStep } from "@/lib/library/types";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { BookCard } from "./BookCard";
 
@@ -30,25 +30,21 @@ export function Library() {
     void refresh();
   }, [refresh]);
 
-  // Make real covers (page 1) for books that don't have one yet: new uploads and books added
-  // before covers existed. One at a time, each card updating as its cover is ready.
-  const missingCovers = books?.filter((b) => b.cover === undefined).map((b) => b.id) ?? [];
+  // Make real covers for books that don't have one yet (books added before covers existed).
+  // One at a time, each card updating as its cover is ready.
+  const missingCovers = books?.filter((b) => b.cover === undefined).map((b) => `${b.id}:${b.fileType}`) ?? [];
   const missingKey = missingCovers.join(",");
   useEffect(() => {
     if (!missingKey) return;
     let cancelled = false;
     (async () => {
-      const { renderPdfCover } = await import("@/lib/library/cover");
-      for (const id of missingKey.split(",")) {
+      const { makeCover } = await import("@/lib/library/cover");
+      for (const entry of missingKey.split(",")) {
         if (cancelled) return;
-        const file = await library.getBookFile(id);
+        const [id, fileType] = entry.split(":") as [string, BookFileType];
+        const file = await library.getBookFile({ id, fileType });
         if (!file) continue;
-        let cover = "";
-        try {
-          cover = await renderPdfCover(file);
-        } catch {
-          // damaged or unusual PDF: keep the generated cover
-        }
+        const cover = await makeCover(file, fileType);
         await library.setCover(id, cover);
         if (cancelled) return;
         setBooks((prev) => prev?.map((b) => (b.id === id ? { ...b, cover } : b)) ?? prev);
@@ -129,7 +125,7 @@ export function Library() {
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept="application/pdf,.pdf,application/epub+zip,.epub"
         multiple
         hidden
         onChange={(e) => {
@@ -155,7 +151,7 @@ export function Library() {
             className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-bg shadow-card transition hover:opacity-90 active:scale-[0.98] disabled:opacity-60"
           >
             {adding ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Add PDF
+            Add book
           </button>
         )}
       </div>
@@ -185,7 +181,7 @@ export function Library() {
           </span>
           <span className="mt-5 font-serif text-xl">Add your first book</span>
           <span className="mt-1.5 max-w-sm text-sm text-muted">
-            Drop a PDF here or click to browse. Up to 50 MB per file.
+            Drop a PDF or EPUB here, or click to browse. Up to 50 MB per file.
           </span>
         </button>
       ) : (

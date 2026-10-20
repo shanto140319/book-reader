@@ -9,14 +9,16 @@ import type { Book } from "@/lib/library/types";
 import { loadPrefs, type ReaderPrefs } from "@/lib/reader/prefs";
 import { BookLoader } from "./BookLoader";
 
-// PDF.js needs browser APIs (canvas, Web Workers), so the reader is loaded
+// PDF.js and epub.js need browser APIs (canvas, Web Workers, iframes), so the readers are loaded
 // only in the browser. `ssr: false` is only allowed inside Client Components.
 const PdfReader = dynamic(() => import("./pdf/PdfReader"), { ssr: false, loading: () => <BookLoader /> });
+const EpubReader = dynamic(() => import("./epub/EpubReader"), { ssr: false, loading: () => <BookLoader /> });
 
 type State =
   | { status: "loading" }
   | { status: "missing" }
-  | { status: "ready"; book: Book; file: Blob; initialPage: number; cover: string | null; prefs: ReaderPrefs };
+  // position: PDF page number as text, or EPUB CFI; null when the book hasn't been opened yet
+  | { status: "ready"; book: Book; file: Blob; position: string | null; cover: string | null; prefs: ReaderPrefs };
 
 export function ReaderLoader({ bookId }: { bookId: string }) {
   const [state, setState] = useState<State>({ status: "loading" });
@@ -29,18 +31,15 @@ export function ReaderLoader({ bookId }: { bookId: string }) {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      library.getBook(bookId),
-      library.getBookFile(bookId),
+      library.getBook(bookId).then(async (book) => ({ book, file: book && (await library.getBookFile(book)) })),
       library.getProgress(bookId),
       library.getCover(bookId),
       loadPrefs(),
     ]).then(
-      ([book, file, progress, cover, prefs]) => {
+      ([{ book, file }, progress, cover, prefs]) => {
         if (cancelled) return;
         if (!book || !file) return setState({ status: "missing" });
-        const saved = Number(progress?.position);
-        const initialPage = Number.isInteger(saved) && saved > 0 ? saved : 1;
-        setState({ status: "ready", book, file, initialPage, cover: cover || null, prefs });
+        setState({ status: "ready", book, file, position: progress?.position ?? null, cover: cover || null, prefs });
       },
       () => !cancelled && setState({ status: "missing" }),
     );
@@ -65,11 +64,23 @@ export function ReaderLoader({ bookId }: { bookId: string }) {
       </div>
     );
   }
+  if (state.book.fileType === "epub") {
+    return (
+      <EpubReader
+        book={state.book}
+        file={state.file}
+        initialCfi={state.position}
+        cover={state.cover}
+        initialPrefs={state.prefs}
+      />
+    );
+  }
+  const saved = Number(state.position);
   return (
     <PdfReader
       book={state.book}
       file={state.file}
-      initialPage={state.initialPage}
+      initialPage={Number.isInteger(saved) && saved > 0 ? saved : 1}
       cover={state.cover}
       initialPrefs={state.prefs}
     />

@@ -1,12 +1,12 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Minus, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Minus, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { BookCover } from "@/components/library/BookCover";
 import type { Highlight } from "@/lib/library/types";
 import { MAX_TRIM, MAX_ZOOM, MIN_ZOOM, type PdfFit, type SidebarTab } from "@/lib/reader/prefs";
-import { PdfHighlights } from "./PdfHighlights";
+import { HighlightsList } from "../shared/HighlightsList";
+import { IconButton, Kbd, ListSkeleton, Section, Segmented, SidebarHeader, SidebarTabs } from "../shared/SidebarParts";
 import { PdfOutline } from "./PdfOutline";
 import { PdfThumbnails } from "./PdfThumbnails";
 
@@ -68,46 +68,16 @@ export function PdfSidebar(props: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-start gap-3 border-b border-border p-4">
-        <div className="w-11 shrink-0">
-          <BookCover title={title} label="PDF" image={cover} mini />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="line-clamp-2 font-serif text-[15px] leading-snug">{title}</p>
-          <p className="mt-1 text-xs text-muted">{numPages ? `${numPages} pages · ${percent}% read` : "Loading…"}</p>
-          <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-2">
-            <div
-              className="h-full rounded-full bg-accent transition-[width] duration-300"
-              style={{ width: `${percent}%` }}
-            />
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close panel"
-          className="-mr-1 -mt-1 grid size-8 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-ink lg:hidden"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
+      <SidebarHeader
+        title={title}
+        label="PDF"
+        cover={cover}
+        detail={numPages ? `${numPages} pages · ${percent}% read` : "Loading…"}
+        percent={percent}
+        onClose={onClose}
+      />
 
-      <div role="tablist" aria-label="Sidebar" className="mx-4 mt-3 grid grid-cols-4 gap-1 rounded-xl bg-surface-2 p-1">
-        {TABS.map(({ value, label }) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            onClick={() => onTab(value)}
-            className={`rounded-lg py-1.5 text-xs font-medium transition ${
-              tab === value ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SidebarTabs tabs={TABS} tab={tab} onTab={onTab} />
 
       {/* data-sidebar-scroll: the scroll area the outline/thumbnail lists keep their current item visible in */}
       <div data-sidebar-scroll role="tabpanel" className="relative mt-2 min-h-0 flex-1 overflow-y-auto">
@@ -132,7 +102,12 @@ export function PdfSidebar(props: Props) {
             <ListSkeleton />
           ))}
         {active && tab === "highlights" && (
-          <PdfHighlights highlights={highlights} onSelect={onGoToHighlight} onRemove={onRemoveHighlight} />
+          <HighlightsList
+            highlights={highlights}
+            locationLabel={(h) => `Page ${h.page}`}
+            onSelect={onGoToHighlight}
+            onRemove={onRemoveHighlight}
+          />
         )}
         {tab === "settings" && (
           <div className="space-y-7 p-4 pt-3">
@@ -169,26 +144,7 @@ export function PdfSidebar(props: Props) {
                   <Plus className="size-4" />
                 </IconButton>
               </div>
-              <div
-                role="radiogroup"
-                aria-label="Page fit"
-                className="mt-3 grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1"
-              >
-                {FITS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={fit === value}
-                    onClick={() => onFit(value)}
-                    className={`rounded-lg py-1.5 text-xs font-medium transition ${
-                      fit === value ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Segmented label="Page fit" options={FITS} value={fit} onChange={onFit} className="mt-3" />
               <p className="mt-2 text-[11px] leading-relaxed text-subtle">100% fits this screen (same as Auto).</p>
             </Section>
 
@@ -280,57 +236,5 @@ function NumberField({
       />
       <span className="shrink-0 text-sm text-subtle">{suffix}</span>
     </label>
-  );
-}
-
-function ListSkeleton() {
-  return (
-    <div className="space-y-3 p-4" aria-busy>
-      {[75, 60, 85, 70].map((w, i) => (
-        <div key={i} className="h-3 animate-pulse rounded-full bg-surface-2" style={{ width: `${w}%` }} />
-      ))}
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-subtle">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-ink transition hover:bg-surface-2 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-    >
-      {children}
-    </button>
-  );
-}
-
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-border bg-surface-2 px-1 py-px font-sans text-[10px] text-muted">
-      {children}
-    </kbd>
   );
 }

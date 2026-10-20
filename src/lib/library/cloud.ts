@@ -2,16 +2,17 @@
 // Same functions as ./local.ts, so the UI doesn't care which one it talks to.
 //
 // - Book info, progress, highlights: Postgres tables (supabase/migrations), protected by Row Level Security.
-// - Files: private Storage bucket "books", at <user id>/<book id>.pdf, uploaded resumably (./upload.ts).
+// - Files: private Storage bucket "books", at <user id>/<book id>.pdf (or .epub), uploaded resumably (./upload.ts).
 // - This browser keeps a cache of downloaded files and covers in IndexedDB, so a book is
 //   downloaded once per device and the library doesn't re-fetch every cover on each visit.
 
 import { clear, createStore, del, entries, get, keys, set, type UseStore } from "idb-keyval";
 import { createClient } from "@/lib/supabase/client";
+import { checkBookFile, readBookInfo } from "./detect";
 import {
-  MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
   type Book,
+  type BookFileType,
   type BookWithProgress,
   type Highlight,
   type HighlightColor,
@@ -39,12 +40,13 @@ type HighlightRow = {
   book_id: string;
   page: number;
   rects: Highlight["rects"];
+  cfi: string | null;
   text: string;
   color: HighlightColor;
   created_at: string;
   updated_at: string;
 };
-const HIGHLIGHT_COLUMNS = "id, book_id, page, rects, text, color, created_at, updated_at";
+const HIGHLIGHT_COLUMNS = "id, book_id, page, rects, cfi, text, color, created_at, updated_at";
 
 let stores: { files: UseStore; covers: UseStore } | null = null;
 function cache() {
@@ -72,7 +74,7 @@ async function accessToken() {
   return token;
 }
 
-const filePath = (uid: string, bookId: string) => `${uid}/${bookId}.pdf`;
+const filePath = (uid: string, bookId: string, type: BookFileType) => `${uid}/${bookId}.${type}`;
 
 function toBook(row: BookRow): Book {
   return {
@@ -139,7 +141,11 @@ async function pruneCache(keep: Set<string>) {
 
 /** Forget every cached book in this browser (on sign out). */
 export async function clearCache() {
-  await Promise.all([clear(cache().files), clear(cache().covers)]);
+  await Promise.all([
+    clear(cache().files),
+    clear(cache().covers),
+    import("./epub-locations").then((cache) => cache.clearSavedLocations()),
+  ]);
 }
 
 export async function getBook(id: string) {
@@ -149,10 +155,10 @@ export async function getBook(id: string) {
 }
 
 /** From this browser's cache, or downloaded once and cached. */
-export async function getBookFile(id: string) {
+export async function getBookFile({ id, fileType }: Pick<Book, "id" | "fileType">) {
   const cached = await get<Blob>(id, cache().files);
   if (cached) return cached;
-  const { data, error } = await sb().storage.from(BUCKET).download(filePath(await userId(), id));
+  const { data, error } = await sb().storage.from(BUCKET).download(filePath(await userId(), id, fileType));
   if (error) {
     console.error(error);
     return undefined;
@@ -164,13 +170,7 @@ export async function getBookFile(id: string) {
 /** Validates, uploads and stores a picked file. Throws an Error with a user-friendly message. */
 export async function addBook(file: File, onStep: OnUploadStep = () => {}): Promise<Book> {
   onStep({ stage: "checking" });
-  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  if (!isPdf) throw new Error("Only PDF files are supported for now.");
-  if (file.size > MAX_FILE_BYTES) throw new Error("That file is over the 50 MB limit.");
-
-  // Check the real file header, not just the name: PDFs start with "%PDF-".
-  const header = new TextDecoder().decode(await file.slice(0, 5).arrayBuffer());
-  if (header !== "%PDF-") throw new Error("That file doesn't look like a valid PDF.");
+  const fileType = await checkBookFile(file);
 
   // Friendly early check; the database enforces the same limit (books_quota trigger).
   const sizes = await sb().from("books").select("size_bytes").overrideTypes<{ size_bytes: number }[], { merge: false }>();
@@ -179,20 +179,14 @@ export async function addBook(file: File, onStep: OnUploadStep = () => {}): Prom
   if (used + file.size > MAX_TOTAL_BYTES) throw new Error("Your library is full (1 GB limit).");
 
   const uid = await userId();
-  const upload = await prepareUpload(file, uid, accessToken);
+  const upload = await prepareUpload(file, fileType, uid, accessToken);
   const id = upload.id;
-  const path = filePath(uid, id);
+  const path = filePath(uid, id, fileType);
 
-  // Cover from page 1, made now while we have the file, so other devices never need to
-  // download the whole book just to show its cover.
+  // Title, author and cover, made now while we have the file, so other devices never need to
+  // download the whole book just to show its cover. (An unreadable EPUB is refused here.)
   onStep({ stage: "cover" });
-  let cover = "";
-  try {
-    const { renderPdfCover } = await import("./cover");
-    cover = await renderPdfCover(file);
-  } catch {
-    // damaged or unusual PDF: the library shows a generated cover instead
-  }
+  const { title, author, cover } = await readBookInfo(file, fileType);
 
   // Upload the file first so a book row never points at a missing file.
   onStep({ stage: "uploading", sent: 0, total: file.size });
@@ -204,8 +198,9 @@ export async function addBook(file: File, onStep: OnUploadStep = () => {}): Prom
     .insert({
       id,
       user_id: uid,
-      title: file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim().slice(0, 300) || "Untitled",
-      file_type: "pdf",
+      title,
+      author,
+      file_type: fileType,
       size_bytes: file.size,
       cover: cover || null,
     })
@@ -236,8 +231,14 @@ export async function updateBook(id: string, patch: Partial<Omit<Book, "id">>) {
 export async function deleteBook(id: string) {
   const { error } = await sb().from("books").delete().eq("id", id); // progress and highlights go with it (cascade)
   fail(error, "Couldn't delete that book. Check your connection and try again.");
-  await sb().storage.from(BUCKET).remove([filePath(await userId(), id)]);
-  await Promise.all([del(id, cache().files), del(id, cache().covers)]);
+  // Either name: removing a file that isn't there is fine, and saves looking up the type.
+  const uid = await userId();
+  await sb().storage.from(BUCKET).remove([filePath(uid, id, "pdf"), filePath(uid, id, "epub")]);
+  await Promise.all([
+    del(id, cache().files),
+    del(id, cache().covers),
+    import("./epub-locations").then((cache) => cache.deleteSavedLocations(id)),
+  ]);
 }
 
 export async function getCover(id: string) {
@@ -281,6 +282,7 @@ function toHighlight(row: HighlightRow): Highlight {
     bookId: row.book_id,
     page: row.page,
     rects: row.rects,
+    cfi: row.cfi ?? undefined,
     text: row.text,
     color: row.color,
     createdAt: Date.parse(row.created_at),
@@ -307,6 +309,7 @@ export async function addHighlight(h: Highlight) {
       book_id: h.bookId,
       page: h.page,
       rects: h.rects,
+      cfi: h.cfi ?? null,
       text: h.text,
       color: h.color,
       created_at: new Date(h.createdAt).toISOString(),

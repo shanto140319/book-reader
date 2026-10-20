@@ -7,12 +7,14 @@ import { compareHighlights, HIGHLIGHT_FILL, HIGHLIGHT_LABEL } from "@/lib/reader
 
 type Props = {
   highlights: Highlight[] | null; // null while loading
+  /** Where the highlight is, under its text: "Page 12" (PDF) or the chapter name (EPUB). */
+  locationLabel: (highlight: Highlight) => string | null;
   onSelect: (highlight: Highlight) => void;
   onRemove: (id: string) => void;
 };
 
 /** Every highlight in the book, in reading order. Tap one to jump to it. */
-export function PdfHighlights({ highlights, onSelect, onRemove }: Props) {
+export function HighlightsList({ highlights, locationLabel, onSelect, onRemove }: Props) {
   const sorted = useMemo(() => (highlights ? [...highlights].sort(compareHighlights) : []), [highlights]);
 
   if (!highlights) {
@@ -32,7 +34,7 @@ export function PdfHighlights({ highlights, onSelect, onRemove }: Props) {
           <Highlighter className="size-5" strokeWidth={1.8} />
         </span>
         <p className="mt-4 text-sm font-medium">No highlights yet</p>
-        <p className="mt-1 text-xs leading-relaxed text-muted">Select text on a page, then pick a colour.</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">Select some text, then pick a colour.</p>
       </div>
     );
   }
@@ -53,7 +55,7 @@ export function PdfHighlights({ highlights, onSelect, onRemove }: Props) {
             />
             <span className="min-w-0 flex-1">
               <span className="line-clamp-4 font-serif text-[13.5px] leading-snug text-ink">{h.text}</span>
-              <span className="mt-1 block text-[11px] tabular-nums text-subtle">Page {h.page}</span>
+              <Location text={locationLabel(h)} />
             </span>
           </button>
           <button
@@ -69,4 +71,9 @@ export function PdfHighlights({ highlights, onSelect, onRemove }: Props) {
       ))}
     </ul>
   );
+}
+
+function Location({ text }: { text: string | null }) {
+  if (!text) return null;
+  return <span className="mt-1 block truncate text-[11px] tabular-nums text-subtle">{text}</span>;
 }
