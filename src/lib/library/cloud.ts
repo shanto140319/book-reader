@@ -1,14 +1,24 @@
 // Library stored in Supabase, used when Supabase is configured (see ./index.ts).
 // Same functions as ./local.ts, so the UI doesn't care which one it talks to.
 //
-// - Book info, progress: Postgres tables (supabase/migrations), protected by Row Level Security.
-// - Files: private Storage bucket "books", at <user id>/<book id>.pdf.
+// - Book info, progress, highlights: Postgres tables (supabase/migrations), protected by Row Level Security.
+// - Files: private Storage bucket "books", at <user id>/<book id>.pdf, uploaded resumably (./upload.ts).
 // - This browser keeps a cache of downloaded files and covers in IndexedDB, so a book is
 //   downloaded once per device and the library doesn't re-fetch every cover on each visit.
 
 import { clear, createStore, del, entries, get, keys, set, type UseStore } from "idb-keyval";
 import { createClient } from "@/lib/supabase/client";
-import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, type Book, type BookWithProgress, type Progress } from "./types";
+import {
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+  type Book,
+  type BookWithProgress,
+  type Highlight,
+  type HighlightColor,
+  type OnUploadStep,
+  type Progress,
+} from "./types";
+import { prepareUpload } from "./upload";
 
 const BUCKET = "books";
 const BOOK_COLUMNS = "id, title, author, file_type, size_bytes, page_count, pdf_trim, created_at";
@@ -24,6 +34,17 @@ type BookRow = {
   created_at: string;
 };
 type ProgressRow = { book_id: string; position: string; percent: number; updated_at: string };
+type HighlightRow = {
+  id: string;
+  book_id: string;
+  page: number;
+  rects: Highlight["rects"];
+  text: string;
+  color: HighlightColor;
+  created_at: string;
+  updated_at: string;
+};
+const HIGHLIGHT_COLUMNS = "id, book_id, page, rects, text, color, created_at, updated_at";
 
 let stores: { files: UseStore; covers: UseStore } | null = null;
 function cache() {
@@ -41,6 +62,14 @@ async function userId() {
   const id = data.session?.user.id;
   if (!id) throw new Error("You're signed out. Please sign in again.");
   return id;
+}
+
+/** The current access token (refreshed by supabase-js when it's about to expire). */
+async function accessToken() {
+  const { data } = await sb().auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("You're signed out. Please sign in again.");
+  return token;
 }
 
 const filePath = (uid: string, bookId: string) => `${uid}/${bookId}.pdf`;
@@ -133,7 +162,8 @@ export async function getBookFile(id: string) {
 }
 
 /** Validates, uploads and stores a picked file. Throws an Error with a user-friendly message. */
-export async function addBook(file: File): Promise<Book> {
+export async function addBook(file: File, onStep: OnUploadStep = () => {}): Promise<Book> {
+  onStep({ stage: "checking" });
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   if (!isPdf) throw new Error("Only PDF files are supported for now.");
   if (file.size > MAX_FILE_BYTES) throw new Error("That file is over the 50 MB limit.");
@@ -149,11 +179,13 @@ export async function addBook(file: File): Promise<Book> {
   if (used + file.size > MAX_TOTAL_BYTES) throw new Error("Your library is full (1 GB limit).");
 
   const uid = await userId();
-  const id = crypto.randomUUID();
+  const upload = await prepareUpload(file, uid, accessToken);
+  const id = upload.id;
   const path = filePath(uid, id);
 
   // Cover from page 1, made now while we have the file, so other devices never need to
   // download the whole book just to show its cover.
+  onStep({ stage: "cover" });
   let cover = "";
   try {
     const { renderPdfCover } = await import("./cover");
@@ -163,9 +195,10 @@ export async function addBook(file: File): Promise<Book> {
   }
 
   // Upload the file first so a book row never points at a missing file.
-  const upload = await sb().storage.from(BUCKET).upload(path, file, { contentType: "application/pdf" });
-  fail(upload.error, "Upload failed. Check your connection and try again.");
+  onStep({ stage: "uploading", sent: 0, total: file.size });
+  await upload.start((sent, total) => onStep({ stage: "uploading", sent, total }));
 
+  onStep({ stage: "saving" });
   const { data, error } = await sb()
     .from("books")
     .insert({
@@ -201,7 +234,7 @@ export async function updateBook(id: string, patch: Partial<Omit<Book, "id">>) {
 }
 
 export async function deleteBook(id: string) {
-  const { error } = await sb().from("books").delete().eq("id", id); // progress goes with it (cascade)
+  const { error } = await sb().from("books").delete().eq("id", id); // progress and highlights go with it (cascade)
   fail(error, "Couldn't delete that book. Check your connection and try again.");
   await sb().storage.from(BUCKET).remove([filePath(await userId(), id)]);
   await Promise.all([del(id, cache().files), del(id, cache().covers)]);
@@ -240,4 +273,57 @@ export async function saveProgress(id: string, progress: Progress) {
     p_updated_at: new Date(progress.updatedAt).toISOString(),
   });
   if (error) console.error(error);
+}
+
+function toHighlight(row: HighlightRow): Highlight {
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    page: row.page,
+    rects: row.rects,
+    text: row.text,
+    color: row.color,
+    createdAt: Date.parse(row.created_at),
+    updatedAt: Date.parse(row.updated_at),
+  };
+}
+
+export async function listHighlights(bookId: string): Promise<Highlight[]> {
+  const { data, error } = await sb()
+    .from("highlights")
+    .select(HIGHLIGHT_COLUMNS)
+    .eq("book_id", bookId)
+    .overrideTypes<HighlightRow[], { merge: false }>();
+  fail(error, "Couldn't load your highlights.");
+  return data.map(toHighlight);
+}
+
+/** Throws when it can't be saved, so the reader can take the highlight back off the page. */
+export async function addHighlight(h: Highlight) {
+  const { error } = await sb()
+    .from("highlights")
+    .insert({
+      id: h.id,
+      book_id: h.bookId,
+      page: h.page,
+      rects: h.rects,
+      text: h.text,
+      color: h.color,
+      created_at: new Date(h.createdAt).toISOString(),
+      updated_at: new Date(h.updatedAt).toISOString(),
+    });
+  fail(error, "Couldn't save that highlight. Check your connection and try again.");
+}
+
+export async function updateHighlight(id: string, patch: { color: HighlightColor }) {
+  const { error } = await sb()
+    .from("highlights")
+    .update({ color: patch.color, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  fail(error, "Couldn't change that highlight. Check your connection and try again.");
+}
+
+export async function deleteHighlight(id: string) {
+  const { error } = await sb().from("highlights").delete().eq("id", id);
+  fail(error, "Couldn't remove that highlight. Check your connection and try again.");
 }

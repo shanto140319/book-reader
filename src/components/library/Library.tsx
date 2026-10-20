@@ -1,14 +1,18 @@
 "use client";
 
-import { FileUp, Loader2, Plus } from "lucide-react";
+import { FileUp, Loader2, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { library } from "@/lib/library";
-import type { BookWithProgress } from "@/lib/library/types";
+import type { BookWithProgress, UploadStep } from "@/lib/library/types";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { BookCard } from "./BookCard";
+
+type Uploading = { name: string; index: number; count: number; step: UploadStep };
 
 export function Library() {
   const [books, setBooks] = useState<BookWithProgress[] | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [uploading, setUploading] = useState<Uploading | null>(null);
+  const adding = uploading !== null;
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,27 +59,53 @@ export function Library() {
     };
   }, [missingKey]);
 
-  async function handleFiles(files: FileList | File[]) {
+  // Ask before leaving mid-upload. (If you do leave, picking the same file again resumes it.)
+  useEffect(() => {
+    if (!adding) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [adding]);
+
+  async function handleFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList);
     setError(null);
-    setAdding(true);
-    try {
-      for (const file of Array.from(files)) await library.addBook(file);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't add that file.");
-    } finally {
-      setAdding(false);
-      await refresh();
+    const errors: string[] = [];
+    // One at a time; a file that fails doesn't stop the rest.
+    for (const [i, file] of files.entries()) {
+      setUploading({ name: file.name, index: i + 1, count: files.length, step: { stage: "checking" } });
+      try {
+        await library.addBook(file, (step) => setUploading((u) => u && { ...u, step }));
+        await refresh(); // show each book as soon as it's in
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Couldn't add that file.";
+        errors.push(files.length > 1 ? `${file.name}: ${message}` : message);
+      }
     }
+    setUploading(null);
+    if (errors.length) setError(errors.join("\n"));
   }
 
+  // Books being deleted right now (several can be in flight at once).
+  const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
+
+  // The book waiting for "Delete" in the confirmation dialog.
+  const [confirming, setConfirming] = useState<BookWithProgress | null>(null);
+
   async function handleDelete(book: BookWithProgress) {
-    if (!confirm(`Delete "${book.title}"? This removes the file and your reading progress.`)) return;
+    setConfirming(null);
+    setDeleting((s) => new Set(s).add(book.id));
     try {
       await library.deleteBook(book.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't delete that book.");
     }
     await refresh();
+    setDeleting((s) => {
+      const next = new Set(s);
+      next.delete(book.id);
+      return next;
+    });
   }
 
   const openPicker = () => inputRef.current?.click();
@@ -130,8 +160,13 @@ export function Library() {
         )}
       </div>
 
+      {uploading && <UploadProgress {...uploading} />}
+
       {error && (
-        <p role="alert" className="mb-6 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
+        <p
+          role="alert"
+          className="mb-6 whitespace-pre-line rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
+        >
           {error}
         </p>
       )}
@@ -156,7 +191,7 @@ export function Library() {
       ) : (
         <div className="grid grid-cols-2 gap-x-5 gap-y-9 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {books.map((book) => (
-            <BookCard key={book.id} book={book} onDelete={handleDelete} />
+            <BookCard key={book.id} book={book} deleting={deleting.has(book.id)} onDelete={setConfirming} />
           ))}
         </div>
       )}
@@ -169,9 +204,80 @@ export function Library() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirming !== null}
+        title="Delete this book?"
+        confirmLabel="Delete"
+        tone="danger"
+        icon={<Trash2 className="size-5" />}
+        onConfirm={() => confirming && void handleDelete(confirming)}
+        onCancel={() => setConfirming(null)}
+      >
+        <p>
+          <span className="font-medium text-ink">{confirming?.title}</span> will be removed from your library, along
+          with your reading progress and highlights. This can&apos;t be undone.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }
+
+/**
+ * Overall progress of the book being added. Sending the file is nearly all of the wait, so it
+ * gets most of the bar; checking, making the cover and saving share the rest.
+ */
+function UploadProgress({ name, index, count, step }: Uploading) {
+  let percent: number;
+  let label: string;
+  switch (step.stage) {
+    case "checking":
+      percent = 2;
+      label = "Checking file…";
+      break;
+    case "cover":
+      percent = 6;
+      label = "Making cover…";
+      break;
+    case "uploading": {
+      const share = step.total ? step.sent / step.total : 0;
+      percent = 10 + share * 87;
+      label = `Uploading · ${formatMB(step.sent)} of ${formatMB(step.total)}`;
+      break;
+    }
+    case "saving":
+      percent = 98;
+      label = "Saving…";
+      break;
+  }
+  const shown = Math.floor(percent);
+
+  return (
+    <div role="status" className="mb-6 rounded-2xl border border-border bg-surface px-4 py-3.5 shadow-card">
+      <div className="flex items-center gap-3 text-sm">
+        <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
+        <span className="min-w-0 flex-1 truncate font-medium">{name}</span>
+        <span className="shrink-0 font-medium tabular-nums">{shown}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label={`Adding ${name}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={shown}
+        className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-2"
+      >
+        <div className="h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${percent}%` }} />
+      </div>
+      <p className="mt-2 text-xs tabular-nums text-muted">
+        {label}
+        {count > 1 && ` · Book ${index} of ${count}`}
+      </p>
+    </div>
+  );
+}
+
+const formatMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 function GridSkeleton() {
   return (

@@ -16,7 +16,8 @@ Open http://localhost:3000.
 Without Supabase keys the app runs in **local mode**: no sign-in, and books, covers and reading progress are stored in your browser (IndexedDB).
 To connect Supabase, copy `.env.example` to `.env.local` and fill in the values, then run
 [supabase/migrations/20261019120000_library.sql](supabase/migrations/20261019120000_library.sql) once in
-Supabase → SQL Editor. It creates the `books`, `reading_progress` and `user_settings` tables, the private
+Supabase → SQL Editor, then [supabase/migrations/20261020120000_highlights.sql](supabase/migrations/20261020120000_highlights.sql).
+They create the `books`, `reading_progress`, `user_settings` and `highlights` tables, the private
 `books` storage bucket, and Row Level Security so each user can only reach their own books.
 With Supabase connected, books, covers, progress and reader settings are stored per account and
 sync across devices; each browser keeps a cache of the files it has opened.
@@ -25,7 +26,8 @@ sync across devices; each browser keeps a cache of the files it has opened.
 
 - Library with real covers (rendered from page 1), progress bars, drag-and-drop upload, delete
 - PDF reader: lazy page rendering, resume at the last page, zoom (typed or stepped), fit width / fit page, side-margin trim
-- Sidebar with table of contents, page thumbnails and reader settings
+- Highlights: select text, pick one of 5 colours; tap a highlight to recolour, copy or remove it
+- Sidebar with table of contents, page thumbnails, a list of highlights and reader settings
 
 ## Scripts
 

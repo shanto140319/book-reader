@@ -5,13 +5,16 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { library } from "@/lib/library";
-import type { Book } from "@/lib/library/types";
+import type { Book, Highlight, HighlightColor } from "@/lib/library/types";
+import type { HighlightDraft } from "@/lib/reader/highlights";
 import { clampZoom, nextZoom, savePrefs, type PdfFit, type ReaderPrefs } from "@/lib/reader/prefs";
 import { useDebouncedSave } from "@/lib/useDebouncedSave";
 import { PdfSidebar } from "./PdfSidebar";
 import PdfScrollView, { type PdfScrollHandle } from "./PdfScrollView";
 
 type Props = { book: Book; file: Blob; initialPage: number; cover: string | null; initialPrefs: ReaderPrefs };
+
+const NO_HIGHLIGHTS: Highlight[] = [];
 
 const isDesktop = () => window.matchMedia("(min-width: 1024px)").matches;
 
@@ -112,6 +115,83 @@ export default function PdfReader({ book, file, initialPage, cover, initialPrefs
     return () => window.removeEventListener("keydown", onKey);
   }, [zoom]);
 
+  // ─── Highlights ─────────────────────────────────────────────────────────────
+  // Changes show at once and are saved in the background; if a save fails it's undone
+  // on screen too, with a short message, so what you see is what's stored.
+
+  const [highlights, setHighlights] = useState<Highlight[] | null>(null); // null = loading
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    library.listHighlights(book.id).then(
+      (loaded) => {
+        if (cancelled) return;
+        // Keep any highlight made while the list was still loading.
+        setHighlights((prev) => [...loaded, ...(prev ?? []).filter((p) => !loaded.some((l) => l.id === p.id))]);
+      },
+      (error: Error) => {
+        if (cancelled) return;
+        setHighlights((prev) => prev ?? []);
+        setNotice(error.message);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [book.id]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const addHighlight = useCallback(
+    (draft: HighlightDraft, color: HighlightColor) => {
+      const now = Date.now();
+      const h: Highlight = { id: crypto.randomUUID(), bookId: book.id, ...draft, color, createdAt: now, updatedAt: now };
+      setHighlights((list) => [...(list ?? []), h]);
+      library.addHighlight(h).catch((error: Error) => {
+        setHighlights((list) => list?.filter((x) => x.id !== h.id) ?? null);
+        setNotice(error.message);
+      });
+    },
+    [book.id],
+  );
+
+  const recolorHighlight = useCallback(
+    (id: string, color: HighlightColor) => {
+      const before = highlights?.find((h) => h.id === id);
+      if (!before) return;
+      const set = (c: HighlightColor) => setHighlights((list) => list?.map((h) => (h.id === id ? { ...h, color: c } : h)) ?? null);
+      set(color);
+      library.updateHighlight(id, { color }).catch((error: Error) => {
+        set(before.color);
+        setNotice(error.message);
+      });
+    },
+    [highlights],
+  );
+
+  const removeHighlight = useCallback(
+    (id: string) => {
+      const removed = highlights?.find((h) => h.id === id);
+      if (!removed) return;
+      setHighlights((list) => list?.filter((h) => h.id !== id) ?? null);
+      library.deleteHighlight(id).catch((error: Error) => {
+        setHighlights((list) => [...(list ?? []), removed]);
+        setNotice(error.message);
+      });
+    },
+    [highlights],
+  );
+
+  function goToHighlight(h: Highlight) {
+    scrollView.current?.scrollToHighlight(h, Math.abs(h.page - page) <= 1);
+    if (!isDesktop()) setSidebarOpen(false);
+  }
+
   const percent = numPages ? (page / numPages) * 100 : 0;
 
   return (
@@ -177,6 +257,9 @@ export default function PdfReader({ book, file, initialPage, cover, initialPrefs
             scale={scale}
             fit={prefs.pdfFit}
             trim={trim}
+            highlights={highlights}
+            onGoToHighlight={goToHighlight}
+            onRemoveHighlight={removeHighlight}
             onGoTo={goToPage}
             onZoom={zoom}
             onZoomTo={zoomTo}
@@ -198,9 +281,22 @@ export default function PdfReader({ book, file, initialPage, cover, initialPrefs
             onLoad={handleLoad}
             onPageChange={handlePageChange}
             onScaleChange={setScale}
+            highlights={highlights ?? NO_HIGHLIGHTS}
+            onAddHighlight={addHighlight}
+            onRecolorHighlight={recolorHighlight}
+            onRemoveHighlight={removeHighlight}
           />
         </div>
       </div>
+
+      {notice && (
+        <div
+          role="status"
+          className="fixed inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-50 mx-auto w-fit max-w-sm rounded-2xl bg-ink px-4 py-2.5 text-center text-sm text-bg shadow-lg"
+        >
+          {notice}
+        </div>
+      )}
     </div>
   );
 }

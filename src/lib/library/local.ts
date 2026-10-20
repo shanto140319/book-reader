@@ -2,17 +2,27 @@
 // With Supabase configured, ./cloud.ts is used instead (see ./index.ts).
 
 import { createStore, del, entries, get, set, type UseStore } from "idb-keyval";
-import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, type Book, type BookWithProgress, type Progress } from "./types";
+import {
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+  type Book,
+  type BookWithProgress,
+  type Highlight,
+  type HighlightColor,
+  type OnUploadStep,
+  type Progress,
+} from "./types";
 
 // Separate stores so listing books never loads the (large) file blobs.
 // Created lazily: IndexedDB doesn't exist during server rendering.
-let stores: { books: UseStore; files: UseStore; progress: UseStore; covers: UseStore } | null = null;
+let stores: Record<"books" | "files" | "progress" | "covers" | "highlights", UseStore> | null = null;
 function db() {
   stores ??= {
     books: createStore("folio-books", "books"),
     files: createStore("folio-files", "files"),
     progress: createStore("folio-progress", "progress"),
     covers: createStore("folio-covers", "covers"), // id → small WebP data URL ("" = couldn't render)
+    highlights: createStore("folio-highlights", "highlights"), // highlight id → Highlight
   };
   return stores;
 }
@@ -41,7 +51,8 @@ export async function getBookFile(id: string) {
 }
 
 /** Validates and stores a picked file. Throws an Error with a user-friendly message. */
-export async function addBook(file: File): Promise<Book> {
+export async function addBook(file: File, onStep: OnUploadStep = () => {}): Promise<Book> {
+  onStep({ stage: "checking" });
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   if (!isPdf) throw new Error("Only PDF files are supported for now.");
   if (file.size > MAX_FILE_BYTES) throw new Error("That file is over the 50 MB limit.");
@@ -63,6 +74,7 @@ export async function addBook(file: File): Promise<Book> {
     createdAt: Date.now(),
   };
   // Store the file first so a book entry never points at a missing file.
+  onStep({ stage: "saving" });
   await set(book.id, file, db().files);
   await set(book.id, book, db().books);
   return book;
@@ -74,7 +86,14 @@ export async function updateBook(id: string, patch: Partial<Omit<Book, "id">>) {
 }
 
 export async function deleteBook(id: string) {
-  await Promise.all([del(id, db().books), del(id, db().files), del(id, db().progress), del(id, db().covers)]);
+  const highlights = await listHighlights(id);
+  await Promise.all([
+    del(id, db().books),
+    del(id, db().files),
+    del(id, db().progress),
+    del(id, db().covers),
+    ...highlights.map((h) => del(h.id, db().highlights)),
+  ]);
 }
 
 /** Nothing to clear: in local mode this browser's storage IS the library. */
@@ -98,4 +117,22 @@ export async function saveProgress(id: string, progress: Progress) {
   const current = await getProgress(id);
   if (current && current.updatedAt > progress.updatedAt) return;
   await set(id, progress, db().progress);
+}
+
+export async function listHighlights(bookId: string): Promise<Highlight[]> {
+  const all = await entries<string, Highlight>(db().highlights);
+  return all.map(([, h]) => h).filter((h) => h.bookId === bookId);
+}
+
+export async function addHighlight(highlight: Highlight) {
+  await set(highlight.id, highlight, db().highlights);
+}
+
+export async function updateHighlight(id: string, patch: { color: HighlightColor }) {
+  const current = await get<Highlight>(id, db().highlights);
+  if (current) await set(id, { ...current, ...patch, updatedAt: Date.now() }, db().highlights);
+}
+
+export async function deleteHighlight(id: string) {
+  await del(id, db().highlights);
 }

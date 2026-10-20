@@ -4,7 +4,9 @@ import { ChevronDown, ChevronUp, Minus, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { BookCover } from "@/components/library/BookCover";
+import type { Highlight } from "@/lib/library/types";
 import { MAX_TRIM, MAX_ZOOM, MIN_ZOOM, type PdfFit, type SidebarTab } from "@/lib/reader/prefs";
+import { PdfHighlights } from "./PdfHighlights";
 import { PdfOutline } from "./PdfOutline";
 import { PdfThumbnails } from "./PdfThumbnails";
 
@@ -21,6 +23,9 @@ type Props = {
   scale: number;
   fit: PdfFit;
   trim: number;
+  highlights: Highlight[] | null;
+  onGoToHighlight: (highlight: Highlight) => void;
+  onRemoveHighlight: (id: string) => void;
   onGoTo: (page: number) => void;
   onZoom: (dir: 1 | -1) => void;
   onZoomTo: (zoom: number) => void;
@@ -38,12 +43,13 @@ const FITS: { value: PdfFit; label: string }[] = [
 const TABS: { value: SidebarTab; label: string }[] = [
   { value: "contents", label: "Contents" },
   { value: "pages", label: "Pages" },
+  { value: "highlights", label: "Highlights" },
   { value: "settings", label: "Settings" },
 ];
 
 export function PdfSidebar(props: Props) {
-  const { active, pdf, tab, onTab, title, cover, page, numPages, scale, fit, trim } = props;
-  const { onGoTo, onZoom, onZoomTo, onFit, onTrim, onClose } = props;
+  const { active, pdf, tab, onTab, title, cover, page, numPages, scale, fit, trim, highlights } = props;
+  const { onGoTo, onZoom, onZoomTo, onFit, onTrim, onClose, onGoToHighlight, onRemoveHighlight } = props;
   const percent = numPages ? Math.round((page / numPages) * 100) : 0;
 
   // Slider moves instantly; the (expensive) page re-render is applied 150ms after it stops.
@@ -86,7 +92,7 @@ export function PdfSidebar(props: Props) {
         </button>
       </div>
 
-      <div role="tablist" aria-label="Sidebar" className="mx-4 mt-3 grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1">
+      <div role="tablist" aria-label="Sidebar" className="mx-4 mt-3 grid grid-cols-4 gap-1 rounded-xl bg-surface-2 p-1">
         {TABS.map(({ value, label }) => (
           <button
             key={value}
@@ -125,6 +131,9 @@ export function PdfSidebar(props: Props) {
           ) : (
             <ListSkeleton />
           ))}
+        {active && tab === "highlights" && (
+          <PdfHighlights highlights={highlights} onSelect={onGoToHighlight} onRemove={onRemoveHighlight} />
+        )}
         {tab === "settings" && (
           <div className="space-y-7 p-4 pt-3">
             <Section title="Page">

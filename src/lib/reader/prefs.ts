@@ -12,7 +12,7 @@ import { supabaseConfigured } from "@/lib/supabase/config";
  */
 export type PdfFit = "auto" | "width" | "page" | "custom";
 
-export type SidebarTab = "contents" | "pages" | "settings";
+export type SidebarTab = "contents" | "pages" | "highlights" | "settings";
 
 export type ReaderPrefs = {
   pdfFit: PdfFit;

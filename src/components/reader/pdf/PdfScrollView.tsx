@@ -1,12 +1,26 @@
 "use client";
 
-import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type Ref,
+} from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import "react-pdf/dist/Page/TextLayer.css";
+import type { Highlight, HighlightColor, HighlightRect } from "@/lib/library/types";
+import { draftFromRange, HIGHLIGHT_FILL, highlightAt, type HighlightDraft } from "@/lib/reader/highlights";
 import type { PdfFit } from "@/lib/reader/prefs";
 import { PDF_OPTIONS } from "@/lib/reader/pdfjs";
 import { BookLoader } from "../BookLoader";
+import { HighlightMenu, type MenuAnchor } from "./HighlightMenu";
 
 // PDF.js parses and draws pages in a Web Worker so scrolling stays smooth.
 // react-pdf requires this to be set in the same file that renders <Document>.
@@ -23,7 +37,16 @@ const MAX_CANVAS_PX = 4096;
 
 export type PdfScrollHandle = {
   scrollToPage: (page: number, smooth?: boolean) => void;
+  /** Brings a highlight to the upper third of the screen. */
+  scrollToHighlight: (highlight: Highlight, smooth?: boolean) => void;
 };
+
+/** One highlight box on one page, ready to draw. */
+type PageMark = { id: string; color: HighlightColor; x: number; y: number; w: number; h: number };
+const NO_MARKS: PageMark[] = [];
+
+/** Text selected (pick a colour to highlight it) or a highlight tapped (change colour, remove). */
+type Menu = { kind: "new"; draft: HighlightDraft; anchor: MenuAnchor } | { kind: "edit"; id: string; anchor: MenuAnchor };
 
 type Props = {
   ref?: Ref<PdfScrollHandle>;
@@ -39,6 +62,10 @@ type Props = {
   onPageChange: (page: number, numPages: number) => void;
   /** Reports the effective zoom (1 = 100%), whatever the fit mode. */
   onScaleChange: (scale: number) => void;
+  highlights: Highlight[];
+  onAddHighlight: (draft: HighlightDraft, color: HighlightColor) => void;
+  onRecolorHighlight: (id: string, color: HighlightColor) => void;
+  onRemoveHighlight: (id: string) => void;
 };
 
 export default function PdfScrollView({
@@ -52,6 +79,10 @@ export default function PdfScrollView({
   onLoad,
   onPageChange,
   onScaleChange,
+  highlights,
+  onAddHighlight,
+  onRecolorHighlight,
+  onRemoveHighlight,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageEls = useRef(new Map<number, HTMLDivElement>());
@@ -183,12 +214,119 @@ export default function PdfScrollView({
     [baseRatio],
   );
 
+  // ─── Highlights ─────────────────────────────────────────────────────────────
+
+  // Boxes per page, oldest first so newer highlights are drawn on top. Rebuilt only when
+  // the highlights change, so PageSlots keep their memo while you scroll.
+  const marksByPage = useMemo(() => {
+    const map = new Map<number, PageMark[]>();
+    for (const h of [...highlights].sort((a, b) => a.createdAt - b.createdAt)) {
+      for (const r of h.rects) {
+        const list = map.get(r.page) ?? [];
+        list.push({ id: h.id, color: h.color, x: r.x, y: r.y, w: r.w, h: r.h });
+        map.set(r.page, list);
+      }
+    }
+    return map;
+  }, [highlights]);
+
+  const [menu, setMenu] = useState<Menu | null>(null);
+  // Zoom, resize or trim moves the words, so a menu pointing at them closes.
+  const [menuLayout, setMenuLayout] = useState(layoutKey);
+  if (menuLayout !== layoutKey) {
+    setMenuLayout(layoutKey);
+    setMenu(null);
+  }
+
+  // Selecting text shows the colour menu once the selection settles: after the mouse/finger
+  // is released, or (phones) after the selection handles stop moving for a moment.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    let pressed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const closeNew = () => setMenu((m) => (m?.kind === "new" ? null : m));
+
+    function check() {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (pressed || !scroller) return; // checked again on release
+        const sel = document.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return closeNew();
+        const range = sel.getRangeAt(0);
+        if (!scroller.contains(range.commonAncestorContainer)) return closeNew();
+        const draft = draftFromRange(range);
+        if (!draft) return closeNew();
+        setMenu({ kind: "new", draft, anchor: anchorFor(scroller, pageEls.current, draft.rects) });
+      }, 200);
+    }
+    const press = () => (pressed = true);
+    const release = () => {
+      if (!pressed) return;
+      pressed = false;
+      check();
+    };
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      setMenu(null);
+      if (scroller?.contains(document.getSelection()?.anchorNode ?? null)) document.getSelection()?.removeAllRanges();
+    }
+
+    document.addEventListener("selectionchange", check);
+    scroller.addEventListener("pointerdown", press);
+    document.addEventListener("pointerup", release);
+    document.addEventListener("pointercancel", release);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("selectionchange", check);
+      scroller.removeEventListener("pointerdown", press);
+      document.removeEventListener("pointerup", release);
+      document.removeEventListener("pointercancel", release);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  // Tapping a highlight opens its menu; tapping anywhere else closes it. The boxes themselves
+  // don't take clicks (pointer-events: none) so the text under them can still be selected.
+  function handleClick(e: MouseEvent) {
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    const inner = (e.target as Element).closest<HTMLElement>("[data-page-inner]");
+    const page = Number(inner?.closest<HTMLElement>("[data-page]")?.dataset.page);
+    const scroller = scrollRef.current;
+    if (!inner || !page || !scroller) return setMenu(null);
+    const r = inner.getBoundingClientRect();
+    const hit = highlightAt(highlights, page, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    setMenu(hit ? { kind: "edit", id: hit.id, anchor: anchorFor(scroller, pageEls.current, hit.rects) } : null);
+  }
+
+  function finish() {
+    setMenu(null);
+    document.getSelection()?.removeAllRanges();
+  }
+
+  function copy(text: string) {
+    navigator.clipboard?.writeText(text).catch(() => {});
+    finish();
+  }
+
+  const editing = menu?.kind === "edit" ? highlights.find((h) => h.id === menu.id) : undefined;
+
   useImperativeHandle(
     ref,
     () => ({
       scrollToPage(page, smooth = false) {
         const el = pageEls.current.get(page);
         scrollRef.current?.scrollTo({ top: el ? el.offsetTop - gap : 0, behavior: smooth ? "smooth" : "instant" });
+      },
+      scrollToHighlight(highlight, smooth = false) {
+        const scroller = scrollRef.current;
+        const el = pageEls.current.get(highlight.page);
+        const first = highlight.rects[0];
+        if (!scroller || !el || !first) return;
+        const top = el.offsetTop + first.y * el.offsetHeight - scroller.clientHeight / 3;
+        scroller.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "instant" });
       },
     }),
     [gap],
@@ -197,7 +335,12 @@ export default function PdfScrollView({
   return (
     // `relative` makes this the offsetParent of the pages, so page.offsetTop is measured from
     // the top of the scroll area (not the whole window, which included the 56px header).
-    <div ref={scrollRef} onScroll={handleScroll} className="relative h-full overflow-auto overscroll-contain">
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      onClick={handleClick}
+      className="relative h-full overflow-auto overscroll-contain"
+    >
       {/*
         suspense={false}: react-pdf 11 suspends by default, which hands loading to the
         nearest <Suspense> (the whole reader). That hid the reader and reset the scroll
@@ -229,6 +372,7 @@ export default function PdfScrollView({
                   offset={offset}
                   dpr={dpr}
                   mode={distance <= TEXT_WINDOW ? "text" : distance <= RENDER_WINDOW ? "canvas" : "empty"}
+                  marks={marksByPage.get(n) ?? NO_MARKS}
                   register={registerPage}
                   onRatio={handleRatio}
                 />
@@ -237,6 +381,33 @@ export default function PdfScrollView({
           </div>
         )}
       </Document>
+      {menu?.kind === "new" && (
+        <HighlightMenu
+          anchor={menu.anchor}
+          scrollerRef={scrollRef}
+          onColor={(color) => {
+            onAddHighlight(menu.draft, color);
+            finish();
+          }}
+          onCopy={() => copy(menu.draft.text)}
+        />
+      )}
+      {editing && menu && (
+        <HighlightMenu
+          anchor={menu.anchor}
+          scrollerRef={scrollRef}
+          current={editing.color}
+          onColor={(color) => {
+            if (color !== editing.color) onRecolorHighlight(editing.id, color);
+            finish();
+          }}
+          onCopy={() => copy(editing.text)}
+          onDelete={() => {
+            onRemoveHighlight(editing.id);
+            finish();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -281,6 +452,7 @@ type SlotProps = {
   dpr: number;
   /** text: canvas + selectable text · canvas: canvas only · empty: lightweight placeholder */
   mode: "text" | "canvas" | "empty";
+  marks: PageMark[];
   register: (n: number, el: HTMLDivElement | null) => void;
   onRatio: (n: number, ratio: number) => void;
 };
@@ -297,6 +469,7 @@ const PageSlot = memo(function PageSlot({
   offset,
   dpr,
   mode,
+  marks,
   register,
   onRatio,
 }: SlotProps) {
@@ -314,7 +487,8 @@ const PageSlot = memo(function PageSlot({
         </span>
       ) : (
         // Full-size page shifted left by `offset`; the box's overflow-hidden clips both sides.
-        <div className="absolute top-0" style={{ left: -offset, width: renderWidth }}>
+        // Highlights are measured against this full-size box (data-page-inner).
+        <div data-page-inner className="absolute top-0" style={{ left: -offset, width: renderWidth, height }}>
           <Page
             suspense={false}
             pageNumber={n}
@@ -325,6 +499,24 @@ const PageSlot = memo(function PageSlot({
             loading={<LoadingPage />}
             onLoadSuccess={(page) => onRatio(n, page.originalHeight / page.originalWidth)}
           />
+          {marks.length > 0 && (
+            // Above the text layer, but click-through. Multiply keeps the words dark under the colour.
+            <div aria-hidden className="pointer-events-none absolute inset-0 mix-blend-multiply">
+              {marks.map((m, i) => (
+                <div
+                  key={`${m.id}-${i}`}
+                  className="absolute rounded-[2px]"
+                  style={{
+                    left: `${m.x * 100}%`,
+                    top: `${m.y * 100}%`,
+                    width: `${m.w * 100}%`,
+                    height: `${m.h * 100}%`,
+                    background: HIGHLIGHT_FILL[m.color],
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -350,4 +542,28 @@ function LoadingPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Where a highlight's menu points: the area its boxes cover, in the scroll area's content
+ * coordinates. Pages are looked up live, so it's right at any zoom or trim.
+ */
+function anchorFor(scroller: HTMLElement, pageEls: Map<number, HTMLDivElement>, rects: HighlightRect[]): MenuAnchor {
+  const view = scroller.getBoundingClientRect();
+  let top = Infinity;
+  let bottom = -Infinity;
+  let left = Infinity;
+  let right = -Infinity;
+  for (const r of rects) {
+    const inner = pageEls.get(r.page)?.querySelector("[data-page-inner]");
+    if (!inner) continue;
+    const p = inner.getBoundingClientRect();
+    top = Math.min(top, p.top + r.y * p.height);
+    bottom = Math.max(bottom, p.top + (r.y + r.h) * p.height);
+    left = Math.min(left, p.left + r.x * p.width);
+    right = Math.max(right, p.left + (r.x + r.w) * p.width);
+  }
+  if (top === Infinity) return { top: scroller.scrollTop, bottom: scroller.scrollTop, x: scroller.clientWidth / 2 };
+  const dy = scroller.scrollTop - view.top;
+  return { top: top + dy, bottom: bottom + dy, x: (left + right) / 2 + scroller.scrollLeft - view.left };
 }

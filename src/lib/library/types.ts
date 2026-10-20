@@ -25,3 +25,28 @@ export type BookWithProgress = Book & {
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+
+export const HIGHLIGHT_COLORS = ["yellow", "green", "blue", "pink", "purple"] as const;
+export type HighlightColor = (typeof HIGHLIGHT_COLORS)[number];
+
+/** One box of a highlight, as fractions (0–1) of the full, untrimmed page, so it fits any zoom or trim. */
+export type HighlightRect = { page: number; x: number; y: number; w: number; h: number };
+
+export type Highlight = {
+  id: string;
+  bookId: string;
+  page: number; // first page the highlight is on (a selection can cross into the next page)
+  rects: HighlightRect[];
+  text: string; // the highlighted words, for the sidebar list
+  color: HighlightColor;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** Steps of adding a book, reported to the library page for its progress bar. */
+export type UploadStep =
+  | { stage: "checking" }
+  | { stage: "cover" }
+  | { stage: "uploading"; sent: number; total: number }
+  | { stage: "saving" };
+export type OnUploadStep = (step: UploadStep) => void;

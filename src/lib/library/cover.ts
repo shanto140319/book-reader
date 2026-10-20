@@ -1,4 +1,4 @@
-// Renders page 1 of a PDF into a small cover image (WebP data URL).
+// Renders page 1 of a PDF into a small cover image (WebP data URL, JPEG where WebP isn't available).
 // Imported dynamically from the library page so PDF.js only loads when a cover is needed.
 
 import { pdfjs } from "react-pdf";
@@ -24,8 +24,26 @@ export async function renderPdfCover(file: Blob): Promise<string> {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvas, viewport }).promise;
-    return canvas.toDataURL("image/webp", 0.82);
+    return encodeCover(canvas);
   } finally {
     await task.destroy(); // frees the worker's copy of the file
   }
+}
+
+/** Same limit as the books.cover column in the database. */
+const MAX_COVER_CHARS = 200_000;
+
+/**
+ * WebP where the browser can make it. Safari on iPhone can't, and silently returns a PNG
+ * instead, which for a picture cover is several times over the limit, so the upload was
+ * rejected. Then JPEG, lowering quality until it fits. "" (generated cover) if nothing fits.
+ */
+function encodeCover(canvas: HTMLCanvasElement) {
+  const webp = canvas.toDataURL("image/webp", 0.82);
+  if (webp.startsWith("data:image/webp") && webp.length <= MAX_COVER_CHARS) return webp;
+  for (const quality of [0.82, 0.7, 0.55, 0.4]) {
+    const jpeg = canvas.toDataURL("image/jpeg", quality);
+    if (jpeg.length <= MAX_COVER_CHARS) return jpeg;
+  }
+  return "";
 }
