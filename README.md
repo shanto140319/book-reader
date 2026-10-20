@@ -28,6 +28,7 @@ sync across devices; each browser keeps a cache of the files it has opened.
 - PDF reader: lazy page rendering, resume at the last page, zoom (typed or stepped), fit width / fit page, side-margin trim
 - Highlights: select text, pick one of 5 colours; tap a highlight to recolour, copy or remove it
 - Bangla translation: select text (or tap a highlight) and press বাংলা. Needs a free Gemini key, see below
+- Read aloud: the speaker button reads the selected English text with the device's own voice (0.75× / 1× / 1.25×), free and offline
 - Sidebar with table of contents, page thumbnails, a list of highlights and reader settings
 
 ## Scripts

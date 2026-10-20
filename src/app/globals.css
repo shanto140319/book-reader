@@ -87,6 +87,12 @@
   --animate-indeterminate: indeterminate 1.3s ease-in-out infinite;
   --animate-fade-in: fade-in 0.45s ease-out both;
   --animate-dialog-in: dialog-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  --animate-sound-bar: sound-bar 0.9s ease-in-out infinite;
+
+  @keyframes sound-bar {
+    0%, 100% { height: 30%; }
+    50% { height: 100%; }
+  }
 
   @keyframes dialog-in {
     from { opacity: 0; transform: translateY(8px) scale(0.97); }

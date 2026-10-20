@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Trash2 } from "lucide-react";
+import { Check, Copy, Trash2, Volume2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { HIGHLIGHT_COLORS, type HighlightColor } from "@/lib/library/types";
 import { HIGHLIGHT_FILL, HIGHLIGHT_LABEL } from "@/lib/reader/highlights";
@@ -16,6 +16,8 @@ type Props = {
   onColor: (color: HighlightColor) => void;
   onCopy: () => void;
   onTranslate: () => void;
+  /** Read aloud. Left out where the browser has no speech voices. */
+  onSpeak?: () => void;
   onDelete?: () => void;
 };
 
@@ -63,7 +65,7 @@ export const keepSelection = {
  * Colour picker shown below the selection (or above, near the bottom of the screen). Below,
  * because phones put their own Copy / Select all menu above the selection.
  */
-export function HighlightMenu({ anchor, scrollerRef, current, onColor, onCopy, onTranslate, onDelete }: Props) {
+export function HighlightMenu({ anchor, scrollerRef, current, onColor, onCopy, onTranslate, onSpeak, onDelete }: Props) {
   const { ref, style } = useMenuPosition(anchor, scrollerRef);
 
   return (
@@ -73,7 +75,7 @@ export function HighlightMenu({ anchor, scrollerRef, current, onColor, onCopy, o
       aria-label={current ? "Edit highlight" : "Highlight"}
       {...keepSelection}
       style={style}
-      className="absolute z-10 flex items-center gap-1 rounded-full border border-border bg-surface p-1.5 shadow-[0_8px_30px_-6px_rgb(0_0_0/0.3)] select-none"
+      className="absolute z-10 flex items-center gap-0.5 rounded-full border border-border bg-surface p-1.5 shadow-[0_8px_30px_-6px_rgb(0_0_0/0.3)] select-none sm:gap-1"
     >
       {HIGHLIGHT_COLORS.map((color) => (
         <button
@@ -83,7 +85,7 @@ export function HighlightMenu({ anchor, scrollerRef, current, onColor, onCopy, o
           aria-pressed={current === color}
           title={HIGHLIGHT_LABEL[color]}
           onClick={() => onColor(color)}
-          className="grid size-8 place-items-center rounded-full transition active:scale-90"
+          className="grid size-7 place-items-center rounded-full transition active:scale-90 sm:size-8"
         >
           <span
             className="grid size-6 place-items-center rounded-full ring-1 ring-black/10 transition hover:scale-110"
@@ -97,6 +99,11 @@ export function HighlightMenu({ anchor, scrollerRef, current, onColor, onCopy, o
       <MenuButton label="Copy text" onClick={onCopy}>
         <Copy className="size-4" />
       </MenuButton>
+      {onSpeak && (
+        <MenuButton label="Read aloud" onClick={onSpeak}>
+          <Volume2 className="size-4" />
+        </MenuButton>
+      )}
       <button
         type="button"
         title="Translate to Bangla"

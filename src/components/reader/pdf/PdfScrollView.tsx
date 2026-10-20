@@ -18,9 +18,11 @@ import "react-pdf/dist/Page/TextLayer.css";
 import type { Highlight, HighlightColor, HighlightRect } from "@/lib/library/types";
 import { draftFromRange, HIGHLIGHT_FILL, highlightAt, type HighlightDraft } from "@/lib/reader/highlights";
 import type { PdfFit } from "@/lib/reader/prefs";
+import { speak, speechSupported, stopSpeaking } from "@/lib/reader/speech";
 import { PDF_OPTIONS } from "@/lib/reader/pdfjs";
 import { BookLoader } from "../BookLoader";
 import { HighlightMenu, type MenuAnchor } from "./HighlightMenu";
+import { SpeakCard } from "./SpeakCard";
 import { TranslateCard } from "./TranslateCard";
 
 // PDF.js parses and draws pages in a Web Worker so scrolling stays smooth.
@@ -52,7 +54,9 @@ type Menu =
   | { kind: "edit"; id: string; anchor: MenuAnchor }
   // Bangla translation card. It stays open when the selection clears (phones clear it on
   // tapping the card), and closes with ×, Esc, a tap elsewhere or a new selection.
-  | { kind: "translate"; text: string; anchor: MenuAnchor };
+  | { kind: "translate"; text: string; anchor: MenuAnchor }
+  // Read-aloud player; same closing rules. The voice stops whenever this menu goes away.
+  | { kind: "speak"; text: string; anchor: MenuAnchor };
 
 type Props = {
   ref?: Ref<PdfScrollHandle>;
@@ -263,9 +267,10 @@ export default function PdfScrollView({
         if (!scroller.contains(range.commonAncestorContainer)) return closeNew();
         const draft = draftFromRange(range);
         if (!draft) return closeNew();
-        // Leave an open translation of this same text alone (pressing বাংলা "re-settles" the selection).
+        // Leave an open translation/player of this same text alone (pressing its button
+        // "re-settles" the selection).
         setMenu((m) =>
-          m?.kind === "translate" && m.text === draft.text
+          (m?.kind === "translate" || m?.kind === "speak") && m.text === draft.text
             ? m
             : { kind: "new", draft, anchor: anchorFor(scroller, pageEls.current, draft.rects) },
         );
@@ -323,6 +328,19 @@ export default function PdfScrollView({
   }
 
   const editing = menu?.kind === "edit" ? highlights.find((h) => h.id === menu.id) : undefined;
+
+  // Read aloud. speak() runs right in the tap (iPhone allows speech only from a tap), then the
+  // player opens. Leaving the player (any other menu, or none) stops the voice, as does leaving the book.
+  const canSpeak = speechSupported();
+  function startSpeaking(text: string, anchor: MenuAnchor) {
+    speak(text);
+    setMenu({ kind: "speak", text, anchor });
+  }
+  const speaking = menu?.kind === "speak";
+  useEffect(() => {
+    if (!speaking) stopSpeaking();
+  }, [speaking]);
+  useEffect(() => stopSpeaking, []);
 
   useImperativeHandle(
     ref,
@@ -402,7 +420,11 @@ export default function PdfScrollView({
           }}
           onCopy={() => copy(menu.draft.text)}
           onTranslate={() => setMenu({ kind: "translate", text: menu.draft.text, anchor: menu.anchor })}
+          onSpeak={canSpeak ? () => startSpeaking(menu.draft.text, menu.anchor) : undefined}
         />
+      )}
+      {menu?.kind === "speak" && (
+        <SpeakCard text={menu.text} anchor={menu.anchor} scrollerRef={scrollRef} onClose={finish} />
       )}
       {menu?.kind === "translate" && (
         <TranslateCard
@@ -424,6 +446,7 @@ export default function PdfScrollView({
           }}
           onCopy={() => copy(editing.text)}
           onTranslate={() => setMenu({ kind: "translate", text: editing.text, anchor: menu.anchor })}
+          onSpeak={canSpeak ? () => startSpeaking(editing.text, menu.anchor) : undefined}
           onDelete={() => {
             onRemoveHighlight(editing.id);
             finish();
