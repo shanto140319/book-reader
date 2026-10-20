@@ -21,6 +21,7 @@ import type { PdfFit } from "@/lib/reader/prefs";
 import { PDF_OPTIONS } from "@/lib/reader/pdfjs";
 import { BookLoader } from "../BookLoader";
 import { HighlightMenu, type MenuAnchor } from "./HighlightMenu";
+import { TranslateCard } from "./TranslateCard";
 
 // PDF.js parses and draws pages in a Web Worker so scrolling stays smooth.
 // react-pdf requires this to be set in the same file that renders <Document>.
@@ -46,7 +47,12 @@ type PageMark = { id: string; color: HighlightColor; x: number; y: number; w: nu
 const NO_MARKS: PageMark[] = [];
 
 /** Text selected (pick a colour to highlight it) or a highlight tapped (change colour, remove). */
-type Menu = { kind: "new"; draft: HighlightDraft; anchor: MenuAnchor } | { kind: "edit"; id: string; anchor: MenuAnchor };
+type Menu =
+  | { kind: "new"; draft: HighlightDraft; anchor: MenuAnchor }
+  | { kind: "edit"; id: string; anchor: MenuAnchor }
+  // Bangla translation card. It stays open when the selection clears (phones clear it on
+  // tapping the card), and closes with ×, Esc, a tap elsewhere or a new selection.
+  | { kind: "translate"; text: string; anchor: MenuAnchor };
 
 type Props = {
   ref?: Ref<PdfScrollHandle>;
@@ -257,7 +263,12 @@ export default function PdfScrollView({
         if (!scroller.contains(range.commonAncestorContainer)) return closeNew();
         const draft = draftFromRange(range);
         if (!draft) return closeNew();
-        setMenu({ kind: "new", draft, anchor: anchorFor(scroller, pageEls.current, draft.rects) });
+        // Leave an open translation of this same text alone (pressing বাংলা "re-settles" the selection).
+        setMenu((m) =>
+          m?.kind === "translate" && m.text === draft.text
+            ? m
+            : { kind: "new", draft, anchor: anchorFor(scroller, pageEls.current, draft.rects) },
+        );
       }, 200);
     }
     const press = () => (pressed = true);
@@ -390,6 +401,16 @@ export default function PdfScrollView({
             finish();
           }}
           onCopy={() => copy(menu.draft.text)}
+          onTranslate={() => setMenu({ kind: "translate", text: menu.draft.text, anchor: menu.anchor })}
+        />
+      )}
+      {menu?.kind === "translate" && (
+        <TranslateCard
+          key={menu.text}
+          text={menu.text}
+          anchor={menu.anchor}
+          scrollerRef={scrollRef}
+          onClose={finish}
         />
       )}
       {editing && menu && (
@@ -402,6 +423,7 @@ export default function PdfScrollView({
             finish();
           }}
           onCopy={() => copy(editing.text)}
+          onTranslate={() => setMenu({ kind: "translate", text: editing.text, anchor: menu.anchor })}
           onDelete={() => {
             onRemoveHighlight(editing.id);
             finish();

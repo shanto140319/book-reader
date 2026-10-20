@@ -27,6 +27,7 @@ sync across devices; each browser keeps a cache of the files it has opened.
 - Library with real covers (rendered from page 1), progress bars, drag-and-drop upload, delete
 - PDF reader: lazy page rendering, resume at the last page, zoom (typed or stepped), fit width / fit page, side-margin trim
 - Highlights: select text, pick one of 5 colours; tap a highlight to recolour, copy or remove it
+- Bangla translation: select text (or tap a highlight) and press বাংলা. Needs a free Gemini key, see below
 - Sidebar with table of contents, page thumbnails, a list of highlights and reader settings
 
 ## Scripts
@@ -34,3 +35,12 @@ sync across devices; each browser keeps a cache of the files it has opened.
 - `npm run dev`: development server
 - `npm run build`: production build
 - `npm run lint`: ESLint
+
+## Bangla translation (optional)
+
+Translation uses Google Gemini's free tier, which needs only a Google account (no card):
+
+1. Open https://aistudio.google.com/apikey and click **Create API key**.
+2. Add it to `.env.local` as `GEMINI_API_KEY=...` (and to your hosting provider's environment variables), then restart `npm run dev`.
+
+The key stays on the server: the reader calls `/api/translate`, which only answers signed-in users and translates up to 2,000 characters at a time. Free-tier limits are per day; on the free tier Google may use the text to improve its models.
