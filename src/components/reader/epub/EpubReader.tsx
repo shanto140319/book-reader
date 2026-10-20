@@ -263,6 +263,7 @@ export default function EpubReader({ book, file, initialCfi, cover, initialPrefs
         book={opened.epub}
         initialCfi={initialCfi}
         look={look}
+        trim={prefs.epubTrim}
         onRelocated={handleRelocated}
         highlights={highlights ?? NO_HIGHLIGHTS}
         onAddHighlight={addHighlight}

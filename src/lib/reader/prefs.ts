@@ -30,6 +30,7 @@ export type ReaderPrefs = {
   epubFontWeight: number; // 0 = the book's own weight, else 300–800
   epubLetterSpacing: number; // extra space between letters, in em (0 = normal)
   epubLineHeight: number; // 0 = the book's own spacing, else 1–2
+  epubTrim: number; // how much of the side margins to remove, 0–1 (for every EPUB, unlike PDF trim)
 };
 
 const KEY = "pata:reader-prefs";
@@ -44,6 +45,7 @@ const DEFAULTS: ReaderPrefs = {
   epubFontWeight: 0,
   epubLetterSpacing: 0,
   epubLineHeight: 0,
+  epubTrim: 0,
 };
 /** Wait this long after the last change before saving to the server (zoom clicks come in bursts). */
 const REMOTE_DELAY = 1500;
@@ -111,6 +113,7 @@ export const EPUB_RANGES = {
   fontWeight: { min: 300, max: 800, step: 100 },
   letterSpacing: { min: 0, max: 0.1, step: 0.005 },
   lineHeight: { min: 1, max: 2, step: 0.05 },
+  trim: { min: 0, max: 1, step: 0.05 },
 };
 
 /** The next zoom step above (dir 1) or below (dir -1) the current scale. */

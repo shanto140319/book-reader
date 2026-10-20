@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { EpubCFI, type Book as EpubBook, type Contents, type Location, type Rendition } from "epubjs";
 import type { Highlight, HighlightColor } from "@/lib/library/types";
 import { EPUB_THEMES, epubCss, highlightStyles, type EpubLook } from "@/lib/reader/epub";
@@ -31,6 +31,8 @@ type Props = {
   /** Where to open; only read when the view is created. */
   initialCfi: string | null;
   look: EpubLook;
+  /** How much of the side margins to remove: 0 = all of them shown, 1 = nearly edge to edge. */
+  trim: number;
   /** `cfi`: the first word on screen, which is where to reopen the book. */
   onRelocated: (location: Location, cfi: string) => void;
   highlights: Highlight[];
@@ -47,7 +49,7 @@ const SETTLE_MS = 200;
  * Turn pages with the arrow keys, by tapping the left/right edge, or by swiping.
  */
 export default function EpubView(props: Props) {
-  const { ref, book, initialCfi, look, highlights } = props;
+  const { ref, book, initialCfi, look, trim, highlights } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
   const [rendition, setRendition] = useState<Rendition | null>(null);
@@ -67,6 +69,11 @@ export default function EpubView(props: Props) {
 
   // Handlers registered once with epub.js read the latest values through refs.
   const latest = useRef({ props, menu, look });
+  // Read by the resize observer, which runs before ordinary effects: so set in a layout effect.
+  const trimRef = useRef(trim);
+  useLayoutEffect(() => {
+    trimRef.current = trim;
+  }, [trim]);
   useEffect(() => {
     latest.current = { props, menu, look };
   });
@@ -99,6 +106,8 @@ export default function EpubView(props: Props) {
         spread: "auto",
         minSpreadWidth: 720,
         allowScriptedContent: false,
+        // epub.js reads this, but its types leave it out.
+        ...({ gap: gapFor(viewer.clientWidth, trimRef.current) } as object),
       }));
 
       rendition.hooks.content.register((contents: Contents) => watchSelection(contents));
@@ -132,9 +141,13 @@ export default function EpubView(props: Props) {
       // The panel opening/closing changes our size without a window resize.
       void shown.then(() => {
         if (r !== rendition) return; // already gone
+        // Trimming the margins changes our width too, so the gap between pages is set here.
         observer = new ResizeObserver(() => {
           const { clientWidth, clientHeight } = viewer;
-          if (clientWidth && clientHeight) rendition.resize(clientWidth, clientHeight);
+          if (!clientWidth || !clientHeight) return;
+          const manager = (rendition as unknown as { manager?: { settings: { gap?: number } } }).manager;
+          if (manager) manager.settings.gap = gapFor(clientWidth, trimRef.current);
+          rendition.resize(clientWidth, clientHeight);
         });
         observer.observe(viewer);
       });
@@ -161,7 +174,7 @@ export default function EpubView(props: Props) {
   // Taken at the first change of a burst (quick +/+/+ clicks) and kept until we're back there,
   // since each reflow moves epub.js's own idea of where we are.
   const keepCfi = useRef<string | null>(null);
-  const lookKey = Object.values(look).join("|");
+  const lookKey = [...Object.values(look), trim].join("|");
   const shownLook = useRef(lookKey);
   useEffect(() => {
     if (!rendition || shownLook.current === lookKey) return;
@@ -404,11 +417,20 @@ export default function EpubView(props: Props) {
       className="relative h-full overflow-hidden transition-colors duration-300"
       style={{ background: colors.bg, color: colors.ink }}
     >
-      <div ref={viewerRef} className="absolute inset-x-5 inset-y-4 sm:inset-x-14 sm:inset-y-6 lg:inset-x-16 lg:inset-y-8" />
+      <div
+        ref={viewerRef}
+        className="absolute inset-x-[calc(1.25rem*var(--keep))] inset-y-4 sm:inset-x-[calc(3.5rem*var(--keep))] sm:inset-y-6 lg:inset-x-[calc(4rem*var(--keep))] lg:inset-y-8"
+        style={{ "--keep": 1 - trim } as React.CSSProperties}
+      />
 
       {/* Page-turn buttons for mouse users; phones tap the edges or swipe. */}
-      <PageButton side="left" onClick={() => turn(-1)} />
-      <PageButton side="right" onClick={() => turn(1)} />
+      {/* Hidden once the margins are mostly trimmed: they'd sit on the text. */}
+      {trim < 0.5 && (
+        <>
+          <PageButton side="left" onClick={() => turn(-1)} />
+          <PageButton side="right" onClick={() => turn(1)} />
+        </>
+      )}
 
       {menu?.kind === "new" && (
         <HighlightMenu
@@ -539,6 +561,16 @@ function withStyle(html: string, css: string) {
   const tag = `<style id="pata-look">${css}</style>`;
   const head = html.search(/<\/head\s*>/i);
   return head >= 0 ? html.slice(0, head) + tag + html.slice(head) : tag + html;
+}
+
+/**
+ * Space between pages (half of it on each side of a page), in px. epub.js's own is 1/12 of the
+ * width; trimming shrinks it, keeping a little so two pages side by side don't touch.
+ */
+function gapFor(width: number, trim: number) {
+  if (!trim) return undefined; // epub.js's default
+  const full = Math.floor(width / 12);
+  return Math.max(16, Math.round(full * (1 - trim)));
 }
 
 /** epub.js types say one Contents; it's really one per chapter on screen. */

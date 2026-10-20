@@ -17,7 +17,7 @@ import { EpubContents } from "./EpubContents";
 type EpubTab = Exclude<SidebarTab, "pages">;
 type EpubPrefs = Pick<
   ReaderPrefs,
-  "epubTheme" | "epubFont" | "epubFontSize" | "epubFontWeight" | "epubLetterSpacing" | "epubLineHeight"
+  "epubTheme" | "epubFont" | "epubFontSize" | "epubFontWeight" | "epubLetterSpacing" | "epubLineHeight" | "epubTrim"
 >;
 
 type Props = {
@@ -143,6 +143,17 @@ export function EpubSidebar(props: Props) {
 
             <Section title="Typeface">
               <Segmented label="Typeface" options={FONTS} value={prefs.epubFont} onChange={(epubFont) => onPrefs({ epubFont })} />
+            </Section>
+
+            <Section title="Margins">
+              <Slider
+                label="Trim left & right"
+                {...EPUB_RANGES.trim}
+                value={prefs.epubTrim}
+                format={(v) => (v ? `${Math.round(v * 100)}%` : "Off")}
+                onChange={(epubTrim) => onPrefs({ epubTrim })}
+                ends={["Original", "Edge to edge"]}
+              />
             </Section>
 
             <Section title="Text">
