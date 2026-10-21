@@ -45,11 +45,12 @@ const MAX_TEXT = 5000; // same limit as the database
 const SETTLE_MS = 200;
 // The buttons are 40px, 8–12px from the edge; the margins are 56–64px (sm/lg) before trimming.
 const MAX_TRIM_WITH_BUTTONS = 0.1;
+const BUTTONS_MS = 4000; // how long the big page-turn buttons stay after the last tap
 
 /**
  * One EPUB, laid out in pages (two side by side on wide screens) by epub.js, inside iframes.
  * Turn pages with the arrow keys, by tapping the left/right edge, or by swiping (finger, mouse
- * drag or a two-finger trackpad swipe).
+ * drag or a two-finger trackpad swipe). Tapping the middle shows big page-turn buttons for a while.
  */
 export default function EpubView(props: Props) {
   const { ref, book, initialCfi, look, trim, highlights } = props;
@@ -69,6 +70,15 @@ export default function EpubView(props: Props) {
     void (dir > 0 ? r.next() : r.prev());
   }
   const [menu, setMenu] = useState<Menu | null>(null);
+
+  // Big page-turn buttons, shown by tapping the middle of the page; they hide after a while.
+  const [buttons, setButtons] = useState(false);
+  const [buttonsUsed, setButtonsUsed] = useState(0); // bumped on each use, restarting the wait
+  useEffect(() => {
+    if (!buttons) return;
+    const timer = setTimeout(() => setButtons(false), BUTTONS_MS);
+    return () => clearTimeout(timer);
+  }, [buttons, buttonsUsed]);
 
   // Handlers registered once with epub.js read the latest values through refs.
   const latest = useRef({ props, menu, look });
@@ -130,8 +140,6 @@ export default function EpubView(props: Props) {
       });
       rendition.on("click", (e: MouseEvent, contents: Contents) => handleTap(e, contents));
       rendition.on("keydown", (e: KeyboardEvent) => handleKey(e));
-      rendition.on("touchstart", (e: TouchEvent) => swipeStart(e.touches.length === 1 ? e.touches[0] : undefined, e.target));
-      rendition.on("touchend", (e: TouchEvent) => swipeEnd(e.changedTouches[0], e.target));
       rendition.on("mousedown", (e: MouseEvent) => swipeStart(e.button === 0 ? e : undefined, e.target));
       rendition.on("mouseup", (e: MouseEvent) => swipeEnd(e, e.target));
 
@@ -231,6 +239,12 @@ export default function EpubView(props: Props) {
   function watchSelection(contents: Contents) {
     const doc = contents.document;
     doc.addEventListener("wheel", handleWheel, { passive: false }); // epub.js doesn't pass wheel events on
+    // Touches are listened to here, not through epub.js, which doesn't pass touchcancel on.
+    const opts = { passive: true };
+    doc.addEventListener("touchstart", (e) => swipeStart(e.touches.length === 1 ? e.touches[0] : undefined, e.target), opts);
+    doc.addEventListener("touchmove", (e) => swipeMove(e.touches[0]), opts);
+    doc.addEventListener("touchend", (e) => swipeEnd(e.changedTouches[0], e.target), opts);
+    doc.addEventListener("touchcancel", (e) => swipeEnd(undefined, e.target), opts);
     let pressed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const closeNew = () => setMenu((m) => (m?.kind === "new" ? null : m));
@@ -319,7 +333,10 @@ export default function EpubView(props: Props) {
     if (frame) tapZone(frame.getBoundingClientRect().left + e.clientX);
   }
 
-  /** The left or right quarter of the reading area turns the page. `x` is in window coordinates. */
+  /**
+   * The left or right quarter of the reading area turns the page; the middle shows or hides the
+   * big page-turn buttons. `x` is in window coordinates.
+   */
   function tapZone(x: number) {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -327,6 +344,10 @@ export default function EpubView(props: Props) {
     const at = (x - w.left) / w.width;
     if (at < 0.25) turn(-1);
     else if (at > 0.75) turn(1);
+    else {
+      setButtons((on) => !on);
+      setButtonsUsed((n) => n + 1);
+    }
   }
 
   /** Taps on the margins around the book (outside its iframes): same as tapping the page's edge. */
@@ -358,19 +379,27 @@ export default function EpubView(props: Props) {
 
   // A swipe is a quick, mostly sideways drag, by finger or mouse, in the book or its margins.
   // Points are in the coordinates of the document they happened in, so a swipe starts and ends
-  // in the same one.
-  const swipe = useRef<{ x: number; y: number; t: number; doc: Document | null } | null>(null);
+  // in the same one. A phone's browser may cancel a touch partway (to use the drag itself), so
+  // then the last point the finger moved to counts as where it ended.
+  type Point = { clientX: number; clientY: number };
+  const swipe = useRef<{ x: number; y: number; t: number; doc: Document | null; last: Point } | null>(null);
   const swipedAt = useRef(0); // the click that ends a mouse swipe isn't also a tap
-  function swipeStart(p: { clientX: number; clientY: number } | undefined, target: EventTarget | null) {
-    swipe.current = p ? { x: p.clientX, y: p.clientY, t: Date.now(), doc: docOf(target) } : null;
+  function swipeStart(p: Point | undefined, target: EventTarget | null) {
+    swipe.current = p
+      ? { x: p.clientX, y: p.clientY, t: Date.now(), doc: docOf(target), last: { clientX: p.clientX, clientY: p.clientY } }
+      : null;
   }
-  function swipeEnd(p: { clientX: number; clientY: number } | undefined, target: EventTarget | null) {
+  function swipeMove(p: Point | undefined) {
+    if (swipe.current && p) swipe.current.last = { clientX: p.clientX, clientY: p.clientY };
+  }
+  function swipeEnd(p: Point | undefined, target: EventTarget | null) {
     const start = swipe.current;
     swipe.current = null;
-    if (!start || !p || start.doc !== docOf(target)) return;
-    const dx = p.clientX - start.x;
-    const dy = p.clientY - start.y;
-    if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.6 || Date.now() - start.t > 700) return;
+    if (!start || start.doc !== docOf(target)) return;
+    const end = p ?? start.last;
+    const dx = end.clientX - start.x;
+    const dy = end.clientY - start.y;
+    if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.7 || Date.now() - start.t > 1000) return;
     const sel = start.doc?.getSelection();
     if (sel && !sel.isCollapsed) return; // selecting text, or dragging a selection handle
     swipedAt.current = Date.now();
@@ -456,11 +485,14 @@ export default function EpubView(props: Props) {
       ref={wrapRef}
       onClick={handleMarginClick}
       onTouchStart={(e) => swipeStart(e.touches.length === 1 && !onControl(e.target) ? e.touches[0] : undefined, e.target)}
+      onTouchMove={(e) => swipeMove(e.touches[0])}
       onTouchEnd={(e) => swipeEnd(e.changedTouches[0], e.target)}
+      onTouchCancel={(e) => swipeEnd(undefined, e.target)}
       onMouseDown={(e) => swipeStart(e.button === 0 && !onControl(e.target) ? e : undefined, e.target)}
       onMouseUp={(e) => swipeEnd(e, e.target)}
       className="relative h-full overflow-hidden transition-colors duration-300"
-      style={{ background: colors.bg, color: colors.ink }}
+      // Sideways finger drags turn pages here, not the browser's own swipe (e.g. back).
+      style={{ background: colors.bg, color: colors.ink, touchAction: "pan-y pinch-zoom", overscrollBehavior: "none" }}
     >
       <div
         ref={viewerRef}
@@ -468,14 +500,27 @@ export default function EpubView(props: Props) {
         style={{ "--keep": 1 - trim } as React.CSSProperties}
       />
 
-      {/* Page-turn buttons for mouse users; phones tap the edges or swipe. */}
+      {/* Small page-turn buttons for mouse users, while the big ones are hidden. */}
       {/* Only while the margins are wide enough to hold them: trimmed, they'd sit on the text. */}
-      {trim <= MAX_TRIM_WITH_BUTTONS && (
+      {!buttons && trim <= MAX_TRIM_WITH_BUTTONS && (
         <>
           <PageButton side="left" onClick={() => turn(-1)} />
           <PageButton side="right" onClick={() => turn(1)} />
         </>
       )}
+      {/* Big ones, on any screen, after a tap in the middle. Using them keeps them up. */}
+      {(["left", "right"] as const).map((side) => (
+        <BigPageButton
+          key={side}
+          side={side}
+          shown={buttons}
+          colors={colors}
+          onClick={() => {
+            turn(side === "left" ? -1 : 1);
+            setButtonsUsed((n) => n + 1);
+          }}
+        />
+      ))}
 
       {menu?.kind === "new" && (
         <HighlightMenu
@@ -528,6 +573,34 @@ function PageButton({ side, onClick }: { side: "left" | "right"; onClick: () => 
       }`}
     >
       <Icon className="size-6" />
+    </button>
+  );
+}
+
+/** A large, solid page-turn button for fingers; it fades in and out. */
+function BigPageButton({
+  side,
+  shown,
+  colors,
+  onClick,
+}: {
+  side: "left" | "right";
+  shown: boolean;
+  colors: { bg: string; ink: string };
+  onClick: () => void;
+}) {
+  const Icon = side === "left" ? ChevronLeft : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={side === "left" ? "Previous page" : "Next page"}
+      style={{ background: colors.bg, color: colors.ink }}
+      className={`absolute top-1/2 z-10 grid size-14 -translate-y-1/2 place-items-center rounded-full shadow-lg ring-1 ring-black/10 transition-[opacity,visibility] duration-200 active:scale-95 ${
+        shown ? "visible opacity-95" : "invisible opacity-0"
+      } ${side === "left" ? "left-3" : "right-3"}`}
+    >
+      <Icon className="size-8" />
     </button>
   );
 }

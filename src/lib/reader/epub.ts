@@ -39,6 +39,8 @@ export function epubCss({ theme, font, fontSize, fontWeight, letterSpacing, line
     // An opaque page: a see-through iframe turns white when its colour scheme differs from the app's.
     `html { background: ${t.bg} !important; color-scheme: ${theme === "dark" ? "dark" : "light"}; }`,
     `body { background: transparent !important; }`,
+    // Sideways finger drags turn pages (see EpubView), so the browser mustn't take them as its own swipe.
+    `html, body { touch-action: pan-y pinch-zoom; overscroll-behavior: none; }`,
     `::selection { background: rgb(164 83 43 / 0.28); }`,
   ];
   if (theme !== "light") {
