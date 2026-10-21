@@ -43,10 +43,13 @@ type Props = {
 
 const MAX_TEXT = 5000; // same limit as the database
 const SETTLE_MS = 200;
+// The buttons are 40px, 8–12px from the edge; the margins are 56–64px (sm/lg) before trimming.
+const MAX_TRIM_WITH_BUTTONS = 0.1;
 
 /**
  * One EPUB, laid out in pages (two side by side on wide screens) by epub.js, inside iframes.
- * Turn pages with the arrow keys, by tapping the left/right edge, or by swiping.
+ * Turn pages with the arrow keys, by tapping the left/right edge, or by swiping (finger, mouse
+ * drag or a two-finger trackpad swipe).
  */
 export default function EpubView(props: Props) {
   const { ref, book, initialCfi, look, trim, highlights } = props;
@@ -127,8 +130,10 @@ export default function EpubView(props: Props) {
       });
       rendition.on("click", (e: MouseEvent, contents: Contents) => handleTap(e, contents));
       rendition.on("keydown", (e: KeyboardEvent) => handleKey(e));
-      rendition.on("touchstart", (e: TouchEvent) => swipeStart(e));
-      rendition.on("touchend", (e: TouchEvent) => swipeEnd(e));
+      rendition.on("touchstart", (e: TouchEvent) => swipeStart(e.touches.length === 1 ? e.touches[0] : undefined, e.target));
+      rendition.on("touchend", (e: TouchEvent) => swipeEnd(e.changedTouches[0], e.target));
+      rendition.on("mousedown", (e: MouseEvent) => swipeStart(e.button === 0 ? e : undefined, e.target));
+      rendition.on("mouseup", (e: MouseEvent) => swipeEnd(e, e.target));
 
       // A saved position that no longer resolves (e.g. damaged) falls back to the start.
       // epub.js queues its work: once this first page is shown, it has started and attached.
@@ -225,6 +230,7 @@ export default function EpubView(props: Props) {
 
   function watchSelection(contents: Contents) {
     const doc = contents.document;
+    doc.addEventListener("wheel", handleWheel, { passive: false }); // epub.js doesn't pass wheel events on
     let pressed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const closeNew = () => setMenu((m) => (m?.kind === "new" ? null : m));
@@ -294,6 +300,7 @@ export default function EpubView(props: Props) {
   // ─── Taps, keys, swipes ─────────────────────────────────────────────────────
 
   function handleTap(e: MouseEvent, contents: Contents) {
+    if (justSwiped()) return;
     if (e.defaultPrevented || (e.target as Element | null)?.closest?.("a")) return; // links: epub.js follows them
     const sel = contents.window.getSelection();
     if (sel && !sel.isCollapsed) return; // the end of a selection, not a tap
@@ -324,7 +331,7 @@ export default function EpubView(props: Props) {
 
   /** Taps on the margins around the book (outside its iframes): same as tapping the page's edge. */
   function handleMarginClick(e: React.MouseEvent) {
-    if ((e.target as Element).closest("button, [role=toolbar], [role=dialog], [role=group]")) return;
+    if (onControl(e.target) || justSwiped()) return;
     if (latest.current.menu) return finish();
     tapZone(e.clientX);
   }
@@ -349,23 +356,57 @@ export default function EpubView(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const swipe = useRef<{ x: number; y: number; t: number } | null>(null);
-  function swipeStart(e: TouchEvent) {
-    const t = e.changedTouches[0];
-    swipe.current = e.touches.length === 1 && t ? { x: t.clientX, y: t.clientY, t: Date.now() } : null;
+  // A swipe is a quick, mostly sideways drag, by finger or mouse, in the book or its margins.
+  // Points are in the coordinates of the document they happened in, so a swipe starts and ends
+  // in the same one.
+  const swipe = useRef<{ x: number; y: number; t: number; doc: Document | null } | null>(null);
+  const swipedAt = useRef(0); // the click that ends a mouse swipe isn't also a tap
+  function swipeStart(p: { clientX: number; clientY: number } | undefined, target: EventTarget | null) {
+    swipe.current = p ? { x: p.clientX, y: p.clientY, t: Date.now(), doc: docOf(target) } : null;
   }
-  function swipeEnd(e: TouchEvent) {
+  function swipeEnd(p: { clientX: number; clientY: number } | undefined, target: EventTarget | null) {
     const start = swipe.current;
-    const t = e.changedTouches[0];
     swipe.current = null;
-    if (!start || !t) return;
-    const dx = t.clientX - start.x;
-    const dy = t.clientY - start.y;
+    if (!start || !p || start.doc !== docOf(target)) return;
+    const dx = p.clientX - start.x;
+    const dy = p.clientY - start.y;
     if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.6 || Date.now() - start.t > 700) return;
-    const sel = (e.target as Node | null)?.ownerDocument?.getSelection();
-    if (sel && !sel.isCollapsed) return; // dragging a selection handle
+    const sel = start.doc?.getSelection();
+    if (sel && !sel.isCollapsed) return; // selecting text, or dragging a selection handle
+    swipedAt.current = Date.now();
     turn(dx < 0 ? 1 : -1);
   }
+  const justSwiped = () => Date.now() - swipedAt.current < 400;
+
+  // Two-finger sideways swipe on a trackpad (or a sideways wheel): one page per gesture.
+  // A gesture keeps sending events (with momentum) for a while; a pause starts a new one.
+  const wheel = useRef({ sum: 0, last: 0, done: false });
+  function handleWheel(e: WheelEvent) {
+    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    e.preventDefault(); // not the browser's swipe-to-go-back
+    const w = wheel.current;
+    const now = Date.now();
+    if (now - w.last > 250) Object.assign(w, { sum: 0, done: false });
+    w.last = now;
+    if (w.done) return;
+    w.sum += e.deltaX;
+    if (Math.abs(w.sum) < 40) return;
+    w.done = true;
+    turn(w.sum > 0 ? 1 : -1);
+  }
+
+  // The margins (the book's iframes get theirs through epub.js and watchSelection).
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!onControl(e.target)) handleWheel(e);
+    };
+    wrap.addEventListener("wheel", onWheel, { passive: false }); // React's onWheel can't preventDefault
+    return () => wrap.removeEventListener("wheel", onWheel);
+    // handleWheel only reads refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── Menu actions ───────────────────────────────────────────────────────────
 
@@ -414,6 +455,10 @@ export default function EpubView(props: Props) {
     <div
       ref={wrapRef}
       onClick={handleMarginClick}
+      onTouchStart={(e) => swipeStart(e.touches.length === 1 && !onControl(e.target) ? e.touches[0] : undefined, e.target)}
+      onTouchEnd={(e) => swipeEnd(e.changedTouches[0], e.target)}
+      onMouseDown={(e) => swipeStart(e.button === 0 && !onControl(e.target) ? e : undefined, e.target)}
+      onMouseUp={(e) => swipeEnd(e, e.target)}
       className="relative h-full overflow-hidden transition-colors duration-300"
       style={{ background: colors.bg, color: colors.ink }}
     >
@@ -424,8 +469,8 @@ export default function EpubView(props: Props) {
       />
 
       {/* Page-turn buttons for mouse users; phones tap the edges or swipe. */}
-      {/* Hidden once the margins are mostly trimmed: they'd sit on the text. */}
-      {trim < 0.5 && (
+      {/* Only while the margins are wide enough to hold them: trimmed, they'd sit on the text. */}
+      {trim <= MAX_TRIM_WITH_BUTTONS && (
         <>
           <PageButton side="left" onClick={() => turn(-1)} />
           <PageButton side="right" onClick={() => turn(1)} />
@@ -571,6 +616,17 @@ function gapFor(width: number, trim: number) {
   if (!trim) return undefined; // epub.js's default
   const full = Math.floor(width / 12);
   return Math.max(16, Math.round(full * (1 - trim)));
+}
+
+/** Buttons and menus over the book: presses on them aren't swipes or page taps. */
+function onControl(target: EventTarget | null) {
+  return !!(target as Element | null)?.closest?.("button, [role=toolbar], [role=dialog], [role=group]");
+}
+
+/** The document an event happened in: ours, or a chapter's iframe. */
+function docOf(target: EventTarget | null) {
+  const node = target as Node | null;
+  return node?.nodeType === Node.DOCUMENT_NODE ? (node as Document) : (node?.ownerDocument ?? null);
 }
 
 /** epub.js types say one Contents; it's really one per chapter on screen. */
