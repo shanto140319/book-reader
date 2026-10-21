@@ -118,7 +118,9 @@ export default function EpubView(props: Props) {
         // Two pages side by side from 720px, so lines don't run too long to read comfortably.
         spread: "auto",
         minSpreadWidth: 720,
-        allowScriptedContent: false,
+        // Safari (so every iPhone browser) runs none of our taps, swipes or selection listeners
+        // in a frame that can't run scripts. The book's own scripts are blocked by withStyle.
+        allowScriptedContent: true,
         // epub.js reads this, but its types leave it out.
         ...({ gap: gapFor(viewer.clientWidth, trimRef.current) } as object),
       }));
@@ -674,8 +676,16 @@ function safely(make: () => string) {
   }
 }
 
-/** A chapter's HTML with our <style> at the end of its <head>, so it wins over the book's own CSS. */
+/**
+ * A chapter's HTML with our <style> at the end of its <head>, so it wins over the book's own CSS.
+ * The book's scripts are taken out, and a policy at the top of <head> stops any left (inline
+ * handlers, javascript: links) from running: the frame may run scripts, but only ours.
+ */
 function withStyle(html: string, css: string) {
+  const policy = `<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'"/>`;
+  html = html.replace(/<script\b[^>]*\/>|<script\b[\s\S]*?<\/script\s*>/gi, "");
+  const open = html.search(/<head\b[^>]*>/i);
+  html = open >= 0 ? html.replace(/<head\b[^>]*>/i, (tag) => tag + policy) : policy + html;
   const tag = `<style id="pata-look">${css}</style>`;
   const head = html.search(/<\/head\s*>/i);
   return head >= 0 ? html.slice(0, head) + tag + html.slice(head) : tag + html;
